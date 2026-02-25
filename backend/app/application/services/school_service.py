@@ -1,9 +1,9 @@
 from datetime import datetime, timezone
 
-from fastapi import HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, joinedload
 
+from app.application.errors import ConflictError, NotFoundError
 from app.domain.roles import UserRole
 from app.infrastructure.db.models import School, User, UserSchoolRole
 from app.interfaces.api.v1.schemas.school import SchoolCreate, SchoolUpdate
@@ -46,10 +46,7 @@ def _replace_memberships(db: Session, school: School, members_payload: list) -> 
     existing_by_id = {user.id: user for user in existing_users}
     missing_user_ids = sorted(set(user_ids) - set(existing_by_id))
     if missing_user_ids:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Users not found: {missing_user_ids}",
-        )
+        raise NotFoundError(f"Users not found: {missing_user_ids}")
 
     memberships: list[UserSchoolRole] = []
     for member in members_payload:
@@ -90,7 +87,7 @@ def list_schools_for_user(db: Session, user: User) -> list[School]:
 def create_school(db: Session, payload: SchoolCreate, creator_user_id: int) -> School:
     existing_slug = db.execute(select(School).where(School.slug == payload.slug)).scalar_one_or_none()
     if existing_slug is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="School slug already exists")
+        raise ConflictError("School slug already exists")
 
     school = School(name=payload.name, slug=payload.slug, is_active=payload.is_active)
     db.add(school)
@@ -110,7 +107,7 @@ def update_school(db: Session, school: School, payload: SchoolUpdate) -> School:
     if payload.slug is not None and payload.slug != school.slug:
         existing_slug = db.execute(select(School).where(School.slug == payload.slug)).scalar_one_or_none()
         if existing_slug is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="School slug already exists")
+            raise ConflictError("School slug already exists")
         school.slug = payload.slug
     if payload.name is not None:
         school.name = payload.name
@@ -133,11 +130,11 @@ def delete_school(db: Session, school: School) -> None:
 def add_user_school_role(db: Session, school_id: int, user_id: int, role: str) -> UserSchoolRole:
     school = db.execute(select(School).where(School.id == school_id, School.deleted_at.is_(None))).scalar_one_or_none()
     if school is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+        raise NotFoundError("School not found")
 
     user = db.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None))).scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise NotFoundError("User not found")
 
     existing = db.execute(
         select(UserSchoolRole).where(
@@ -147,7 +144,7 @@ def add_user_school_role(db: Session, school_id: int, user_id: int, role: str) -
         )
     ).scalar_one_or_none()
     if existing is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Membership already exists")
+        raise ConflictError("Membership already exists")
 
     membership = UserSchoolRole(school_id=school_id, user_id=user_id, role=role)
     db.add(membership)
@@ -161,7 +158,7 @@ def remove_user_school_roles(db: Session, school_id: int, user_id: int) -> None:
         select(UserSchoolRole).where(UserSchoolRole.school_id == school_id, UserSchoolRole.user_id == user_id)
     ).scalars().all()
     if not memberships:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found")
+        raise NotFoundError("Membership not found")
     for membership in memberships:
         db.delete(membership)
     db.commit()

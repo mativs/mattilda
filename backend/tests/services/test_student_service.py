@@ -1,6 +1,6 @@
 import pytest
-from fastapi import HTTPException
 
+from app.application.errors import ConflictError, NotFoundError
 from app.application.services.student_service import (
     associate_student_school,
     associate_user_student,
@@ -74,13 +74,13 @@ def test_create_student_raises_conflict_for_duplicate_external_id(db_session):
 
     1. Seed student with external id.
     2. Call create_student with same external id.
-    3. Validate service raises HTTPException.
-    4. Validate status code is conflict.
+    3. Validate service raises ConflictError.
+    4. Validate exception message matches expected conflict.
     """
     factory_create_student(db_session, "Dup", "Kid", "CRT-002")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ConflictError) as exc:
         create_student(db_session, StudentCreate(first_name="Other", last_name="Kid", external_id="CRT-002"))
-    assert exc.value.status_code == 409
+    assert str(exc.value) == "Student external_id already exists"
 
 
 def test_create_student_for_school_creates_student_and_link(db_session):
@@ -108,16 +108,16 @@ def test_create_student_for_school_raises_for_missing_school(db_session):
 
     1. Build valid create payload.
     2. Call create_student_for_school with unknown school id.
-    3. Validate service raises HTTPException.
-    4. Validate status code is not found.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
     """
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(NotFoundError) as exc:
         create_student_for_school(
             db_session,
             StudentCreate(first_name="Ghost", last_name="Kid", external_id="CRT-004"),
             999999,
         )
-    assert exc.value.status_code == 404
+    assert str(exc.value) == "School not found"
 
 
 def test_update_student_updates_fields(db_session):
@@ -145,14 +145,14 @@ def test_update_student_raises_conflict_for_duplicate_external_id(db_session):
 
     1. Seed two students with different external ids.
     2. Call update_student to duplicate second external id.
-    3. Validate service raises HTTPException.
-    4. Validate status code is conflict.
+    3. Validate service raises ConflictError.
+    4. Validate exception message matches expected conflict.
     """
     target = factory_create_student(db_session, "One", "Kid", "UPD-010")
     other = factory_create_student(db_session, "Two", "Kid", "UPD-011")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ConflictError) as exc:
         update_student(db_session, target, StudentUpdate(external_id=other.external_id))
-    assert exc.value.status_code == 409
+    assert str(exc.value) == "Student external_id already exists"
 
 
 def test_delete_student_sets_soft_delete_flag(db_session):
@@ -191,15 +191,15 @@ def test_associate_user_student_raises_for_duplicate_link(db_session):
 
     1. Seed user-student link directly.
     2. Call associate_user_student with same identifiers.
-    3. Validate service raises HTTPException.
-    4. Validate status code is conflict.
+    3. Validate service raises ConflictError.
+    4. Validate exception message matches expected conflict.
     """
     user = factory_create_user(db_session, "dup-user-link@example.com")
     student = factory_create_student(db_session, "Dup", "Kid", "ASC-002")
     link_user_student(db_session, user.id, student.id)
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ConflictError) as exc:
         associate_user_student(db_session, user.id, student.id)
-    assert exc.value.status_code == 409
+    assert str(exc.value) == "Association already exists"
 
 
 def test_associate_user_student_raises_for_missing_user(db_session):
@@ -208,13 +208,13 @@ def test_associate_user_student_raises_for_missing_user(db_session):
 
     1. Seed only student entity.
     2. Call associate_user_student with missing user id.
-    3. Validate service raises HTTPException.
-    4. Validate status code is not found.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
     """
     student = factory_create_student(db_session, "Missing", "User", "ASC-003")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(NotFoundError) as exc:
         associate_user_student(db_session, 999999, student.id)
-    assert exc.value.status_code == 404
+    assert str(exc.value) == "User not found"
 
 
 def test_associate_user_student_raises_for_missing_student(db_session):
@@ -223,13 +223,13 @@ def test_associate_user_student_raises_for_missing_student(db_session):
 
     1. Seed only user entity.
     2. Call associate_user_student with missing student id.
-    3. Validate service raises HTTPException.
-    4. Validate status code is not found.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
     """
     user = factory_create_user(db_session, "missing-student@example.com")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(NotFoundError) as exc:
         associate_user_student(db_session, user.id, 999999)
-    assert exc.value.status_code == 404
+    assert str(exc.value) == "Student not found"
 
 
 def test_deassociate_user_student_deletes_link(db_session):
@@ -257,14 +257,14 @@ def test_deassociate_user_student_raises_for_missing_link(db_session):
 
     1. Seed user and student without association.
     2. Call deassociate_user_student once.
-    3. Validate service raises HTTPException.
-    4. Validate status code is not found.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
     """
     user = factory_create_user(db_session, "missing-link@example.com")
     student = factory_create_student(db_session, "Missing", "Link", "ASC-101")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(NotFoundError) as exc:
         deassociate_user_student(db_session, user.id, student.id)
-    assert exc.value.status_code == 404
+    assert str(exc.value) == "Association not found"
 
 
 def test_associate_student_school_creates_link(db_session):
@@ -289,15 +289,15 @@ def test_associate_student_school_raises_for_duplicate_link(db_session):
 
     1. Seed student-school link directly.
     2. Call associate_student_school with same identifiers.
-    3. Validate service raises HTTPException.
-    4. Validate status code is conflict.
+    3. Validate service raises ConflictError.
+    4. Validate exception message matches expected conflict.
     """
     school = create_school(db_session, "Dup School", "dup-school")
     student = factory_create_student(db_session, "Dup", "School", "SCH-002")
     link_student_school(db_session, student.id, school.id)
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ConflictError) as exc:
         associate_student_school(db_session, student.id, school.id)
-    assert exc.value.status_code == 409
+    assert str(exc.value) == "Association already exists"
 
 
 def test_associate_student_school_raises_for_missing_school(db_session):
@@ -306,13 +306,13 @@ def test_associate_student_school_raises_for_missing_school(db_session):
 
     1. Seed only student entity.
     2. Call associate_student_school with missing school id.
-    3. Validate service raises HTTPException.
-    4. Validate status code is not found.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
     """
     student = factory_create_student(db_session, "Missing", "School", "SCH-003")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(NotFoundError) as exc:
         associate_student_school(db_session, student.id, 999999)
-    assert exc.value.status_code == 404
+    assert str(exc.value) == "School not found"
 
 
 def test_associate_student_school_raises_for_missing_student(db_session):
@@ -321,13 +321,13 @@ def test_associate_student_school_raises_for_missing_student(db_session):
 
     1. Seed only school entity.
     2. Call associate_student_school with missing student id.
-    3. Validate service raises HTTPException.
-    4. Validate status code is not found.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
     """
     school = create_school(db_session, "Missing Student School", "missing-student-school")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(NotFoundError) as exc:
         associate_student_school(db_session, 999999, school.id)
-    assert exc.value.status_code == 404
+    assert str(exc.value) == "Student not found"
 
 
 def test_deassociate_student_school_deletes_link(db_session):
@@ -353,11 +353,11 @@ def test_deassociate_student_school_raises_for_missing_link(db_session):
 
     1. Seed student and school without association.
     2. Call deassociate_student_school once.
-    3. Validate service raises HTTPException.
-    4. Validate status code is not found.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
     """
     school = create_school(db_session, "No Link School", "no-link-school")
     student = factory_create_student(db_session, "No", "Link", "SCH-101")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(NotFoundError) as exc:
         deassociate_student_school(db_session, student.id, school.id)
-    assert exc.value.status_code == 404
+    assert str(exc.value) == "Association not found"

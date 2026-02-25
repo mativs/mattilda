@@ -1,9 +1,9 @@
 from datetime import datetime, timezone
 
-from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.application.errors import ConflictError, NotFoundError
 from app.infrastructure.db.models import School, Student, StudentSchool, User, UserStudent
 from app.interfaces.api.v1.schemas.student import StudentCreate, StudentUpdate
 
@@ -49,7 +49,7 @@ def create_student(db: Session, payload: StudentCreate) -> Student:
             select(Student).where(Student.external_id == payload.external_id, Student.deleted_at.is_(None))
         ).scalar_one_or_none()
         if existing is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Student external_id already exists")
+            raise ConflictError("Student external_id already exists")
 
     student = Student(first_name=payload.first_name, last_name=payload.last_name, external_id=payload.external_id)
     db.add(student)
@@ -61,7 +61,7 @@ def create_student(db: Session, payload: StudentCreate) -> Student:
 def create_student_for_school(db: Session, payload: StudentCreate, school_id: int) -> Student:
     school = db.execute(select(School).where(School.id == school_id, School.deleted_at.is_(None))).scalar_one_or_none()
     if school is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+        raise NotFoundError("School not found")
 
     student = create_student(db=db, payload=payload)
     db.add(StudentSchool(student_id=student.id, school_id=school_id))
@@ -76,7 +76,7 @@ def update_student(db: Session, student: Student, payload: StudentUpdate) -> Stu
             select(Student).where(Student.external_id == payload.external_id, Student.deleted_at.is_(None))
         ).scalar_one_or_none()
         if existing is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Student external_id already exists")
+            raise ConflictError("Student external_id already exists")
         student.external_id = payload.external_id
     if payload.first_name is not None:
         student.first_name = payload.first_name
@@ -96,15 +96,15 @@ def associate_user_student(db: Session, user_id: int, student_id: int) -> UserSt
     user = db.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None))).scalar_one_or_none()
     student = db.execute(select(Student).where(Student.id == student_id, Student.deleted_at.is_(None))).scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise NotFoundError("User not found")
     if student is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
+        raise NotFoundError("Student not found")
 
     existing = db.execute(
         select(UserStudent).where(UserStudent.user_id == user_id, UserStudent.student_id == student_id)
     ).scalar_one_or_none()
     if existing is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Association already exists")
+        raise ConflictError("Association already exists")
 
     link = UserStudent(user_id=user_id, student_id=student_id)
     db.add(link)
@@ -118,7 +118,7 @@ def deassociate_user_student(db: Session, user_id: int, student_id: int) -> None
         select(UserStudent).where(UserStudent.user_id == user_id, UserStudent.student_id == student_id)
     ).scalar_one_or_none()
     if link is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Association not found")
+        raise NotFoundError("Association not found")
     db.delete(link)
     db.commit()
 
@@ -127,15 +127,15 @@ def associate_student_school(db: Session, student_id: int, school_id: int) -> St
     school = db.execute(select(School).where(School.id == school_id, School.deleted_at.is_(None))).scalar_one_or_none()
     student = db.execute(select(Student).where(Student.id == student_id, Student.deleted_at.is_(None))).scalar_one_or_none()
     if school is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+        raise NotFoundError("School not found")
     if student is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
+        raise NotFoundError("Student not found")
 
     existing = db.execute(
         select(StudentSchool).where(StudentSchool.student_id == student_id, StudentSchool.school_id == school_id)
     ).scalar_one_or_none()
     if existing is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Association already exists")
+        raise ConflictError("Association already exists")
 
     link = StudentSchool(student_id=student_id, school_id=school_id)
     db.add(link)
@@ -149,6 +149,6 @@ def deassociate_student_school(db: Session, student_id: int, school_id: int) -> 
         select(StudentSchool).where(StudentSchool.student_id == student_id, StudentSchool.school_id == school_id)
     ).scalar_one_or_none()
     if link is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Association not found")
+        raise NotFoundError("Association not found")
     db.delete(link)
     db.commit()

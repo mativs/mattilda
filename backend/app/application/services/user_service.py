@@ -1,9 +1,9 @@
 from datetime import datetime, timezone
 
-from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.application.errors import ConflictError
 from app.application.services.security_service import hash_password
 from app.domain.roles import UserRole
 from app.infrastructure.db.models import User, UserProfile
@@ -21,7 +21,7 @@ def get_user_by_email(db: Session, email: str) -> User | None:
 def create_user(db: Session, payload: UserCreate) -> User:
     existing_user = get_user_by_email(db=db, email=payload.email)
     if existing_user is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists")
+        raise ConflictError("User already exists")
 
     user = User(
         email=payload.email,
@@ -44,7 +44,7 @@ def update_user(db: Session, user: User, payload: UserUpdate) -> User:
     if payload.email is not None and payload.email != user.email:
         existing_user = get_user_by_email(db=db, email=payload.email)
         if existing_user is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists")
+            raise ConflictError("User already exists")
         user.email = payload.email
 
     if payload.password is not None:

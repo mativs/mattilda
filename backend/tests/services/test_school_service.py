@@ -1,6 +1,6 @@
 import pytest
-from fastapi import HTTPException
 
+from app.application.errors import ConflictError, NotFoundError
 from app.application.services.school_service import (
     add_user_school_role,
     create_school,
@@ -43,17 +43,17 @@ def test_create_school_raises_conflict_for_duplicate_slug(db_session, seeded_use
 
     1. Seed a school with target slug.
     2. Call create_school with duplicate slug.
-    3. Validate service raises HTTPException.
-    4. Validate status code is conflict.
+    3. Validate service raises ConflictError.
+    4. Validate exception message matches expected conflict.
     """
     factory_create_school(db_session, "Existing", "dup-slug")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ConflictError) as exc:
         create_school(
             db_session,
             SchoolCreate(name="New", slug="dup-slug"),
             creator_user_id=seeded_users["admin"].id,
         )
-    assert exc.value.status_code == 409
+    assert str(exc.value) == "School slug already exists"
 
 
 def test_create_school_raises_not_found_for_missing_member_user(db_session, seeded_users):
@@ -62,10 +62,10 @@ def test_create_school_raises_not_found_for_missing_member_user(db_session, seed
 
     1. Build payload with non-existing member user id.
     2. Call create_school service once.
-    3. Validate service raises HTTPException.
-    4. Validate status code is not found.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message includes missing users.
     """
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(NotFoundError) as exc:
         create_school(
             db_session,
             SchoolCreate(
@@ -75,7 +75,7 @@ def test_create_school_raises_not_found_for_missing_member_user(db_session, seed
             ),
             creator_user_id=seeded_users["admin"].id,
         )
-    assert exc.value.status_code == 404
+    assert "Users not found" in str(exc.value)
 
 
 def test_create_school_with_members_payload_creates_memberships(db_session, seeded_users):
@@ -172,14 +172,14 @@ def test_update_school_raises_conflict_for_duplicate_slug(db_session):
 
     1. Seed two schools with distinct slugs.
     2. Call update_school changing one to other slug.
-    3. Validate service raises HTTPException.
-    4. Validate status code is conflict.
+    3. Validate service raises ConflictError.
+    4. Validate exception message matches expected conflict.
     """
     target = factory_create_school(db_session, "Target", "target")
     existing = factory_create_school(db_session, "Existing", "existing")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ConflictError) as exc:
         update_school(db_session, target, SchoolUpdate(slug=existing.slug))
-    assert exc.value.status_code == 409
+    assert str(exc.value) == "School slug already exists"
 
 
 def test_delete_school_sets_soft_delete_flags(db_session):
@@ -251,15 +251,15 @@ def test_add_user_school_role_raises_for_duplicate_membership(db_session):
 
     1. Seed user-school membership with same role.
     2. Call add_user_school_role once with duplicate values.
-    3. Validate service raises HTTPException.
-    4. Validate status code is conflict.
+    3. Validate service raises ConflictError.
+    4. Validate exception message matches expected conflict.
     """
     user = factory_create_user(db_session, "dup-member@example.com")
     school = factory_create_school(db_session, "Dup School", "dup-school")
     add_membership(db_session, user.id, school.id, UserRole.teacher)
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ConflictError) as exc:
         add_user_school_role(db_session, school.id, user.id, UserRole.teacher.value)
-    assert exc.value.status_code == 409
+    assert str(exc.value) == "Membership already exists"
 
 
 def test_add_user_school_role_raises_for_missing_school(db_session):
@@ -268,13 +268,13 @@ def test_add_user_school_role_raises_for_missing_school(db_session):
 
     1. Seed only user entity.
     2. Call add_user_school_role with non-existing school id.
-    3. Validate service raises HTTPException.
-    4. Validate status code is not found.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
     """
     user = factory_create_user(db_session, "missing-school@example.com")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(NotFoundError) as exc:
         add_user_school_role(db_session, 999999, user.id, UserRole.teacher.value)
-    assert exc.value.status_code == 404
+    assert str(exc.value) == "School not found"
 
 
 def test_add_user_school_role_raises_for_missing_user(db_session):
@@ -283,13 +283,13 @@ def test_add_user_school_role_raises_for_missing_user(db_session):
 
     1. Seed only school entity.
     2. Call add_user_school_role with non-existing user id.
-    3. Validate service raises HTTPException.
-    4. Validate status code is not found.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
     """
     school = factory_create_school(db_session, "Missing User School", "missing-user-school")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(NotFoundError) as exc:
         add_user_school_role(db_session, school.id, 999999, UserRole.teacher.value)
-    assert exc.value.status_code == 404
+    assert str(exc.value) == "User not found"
 
 
 def test_remove_user_school_roles_deletes_memberships(db_session):
@@ -315,11 +315,11 @@ def test_remove_user_school_roles_raises_for_missing_membership(db_session):
 
     1. Seed user and school without membership.
     2. Call remove_user_school_roles once.
-    3. Validate service raises HTTPException.
-    4. Validate status code is not found.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
     """
     user = factory_create_user(db_session, "no-membership@example.com")
     school = factory_create_school(db_session, "No Member School", "no-member-school")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(NotFoundError) as exc:
         remove_user_school_roles(db_session, school.id, user.id)
-    assert exc.value.status_code == 404
+    assert str(exc.value) == "Membership not found"

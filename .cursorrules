@@ -14,6 +14,9 @@
 - Keep API schemas explicit and response-model-safe (no leaking internal fields like hashed passwords).
 - Keep role checks and ownership checks separated and test both.
 - Preserve one public non-auth endpoint (`/api/v1/ping`) for smoke checks.
+- Keep hexagonal exception boundaries:
+  - Application/services must use framework-agnostic exceptions only.
+  - FastAPI `HTTPException` and HTTP status mapping belong to interface adapters/handlers.
 
 ## Security
 - Never log, return, or expose passwords, hashed passwords, or JWT secrets.

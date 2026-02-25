@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 
 import pytest
-from fastapi import HTTPException
 
+from app.application.errors import ConflictError
 from app.application.services.user_service import (
     create_user,
     delete_user,
@@ -45,13 +45,13 @@ def test_create_user_raises_conflict_for_duplicate_email(db_session):
 
     1. Seed a user with the target email.
     2. Call create_user with duplicate email payload.
-    3. Validate service raises HTTPException.
-    4. Validate status code is conflict.
+    3. Validate service raises ConflictError.
+    4. Validate exception message matches expected conflict.
     """
     factory_create_user(db_session, email="duplicate@example.com")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ConflictError) as exc:
         create_user(db_session, _user_create_payload("duplicate@example.com"))
-    assert exc.value.status_code == 409
+    assert str(exc.value) == "User already exists"
 
 
 def test_update_user_changes_email_password_and_active_state(db_session):
@@ -102,14 +102,14 @@ def test_update_user_raises_conflict_for_duplicate_email(db_session):
 
     1. Seed two users with distinct emails.
     2. Call update_user changing first user to second user email.
-    3. Validate service raises HTTPException.
-    4. Validate status code is conflict.
+    3. Validate service raises ConflictError.
+    4. Validate exception message matches expected conflict.
     """
     user = factory_create_user(db_session, email="one@example.com")
     factory_create_user(db_session, email="two@example.com")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(ConflictError) as exc:
         update_user(db_session, user, UserUpdate(email="two@example.com"))
-    assert exc.value.status_code == 409
+    assert str(exc.value) == "User already exists"
 
 
 def test_delete_user_sets_soft_delete_flags(db_session):
