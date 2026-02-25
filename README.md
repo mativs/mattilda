@@ -22,6 +22,8 @@ Starter environment for a take-home exercise with:
 │   │   ├── application/
 │   │   ├── infrastructure/
 │   │   └── interfaces/
+│   ├── alembic/
+│   ├── scripts/
 │   └── tests/
 ├── frontend/
 └── docker-compose.yml
@@ -29,33 +31,69 @@ Starter environment for a take-home exercise with:
 
 ## Run with Docker Compose
 
-1. Copy env file:
+1. Initialize local environment file:
 
    ```bash
-   cp .env.example .env
+   make init-env
    ```
 
 2. Build and start:
 
    ```bash
-   docker compose up --build -d
+   make up
    ```
 
-3. Verify:
+3. Apply migrations:
+
+   ```bash
+   make migrate
+   ```
+
+4. Seed mock data:
+
+   ```bash
+   make seed
+   ```
+
+5. Verify:
 
 - Frontend: http://localhost:13000
 - Backend: http://localhost:18000
 - Dummy API endpoint: http://localhost:18000/api/v1/ping
 - Swagger docs: http://localhost:18000/docs
+- OAuth token endpoint: `POST /api/v1/auth/token`
 
-4. Stop services:
+6. Stop services:
 
    ```bash
-   docker compose down
+   make down
    ```
 
 ## Run backend tests
 
 ```bash
-docker compose run --rm backend uv run pytest
+make test
 ```
+
+## Makefile shortcuts
+
+Use `make help` to see all available commands.
+
+```bash
+make init-env
+make up
+make migrate
+make seed
+make test
+make down
+```
+
+## Login test users
+
+Seed command creates:
+
+- `admin@example.com` / `admin123`
+- `teacher@example.com` / `teacher123`
+- `student@example.com` / `student123`
+
+Use the frontend login form at `http://localhost:13000` to verify authenticated session and the dummy home page.

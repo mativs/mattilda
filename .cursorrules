@@ -1,0 +1,53 @@
+# Project Rules
+
+## General
+- Keep changes small, explicit, and production-oriented.
+- Follow current project structure (hexagonal-inspired backend folders).
+- Do not remove or break existing working behavior unless explicitly requested.
+- Prefer incremental edits over broad refactors.
+- Update docs/config when behavior, commands, or defaults change.
+
+## Backend
+- Python with FastAPI, SQLAlchemy, Alembic, and uv dependency workflow.
+- Prefer clear service-layer logic and explicit dependency injection patterns.
+- Keep public endpoints explicit; auth/role/ownership checks must be enforced in backend.
+- Keep API schemas explicit and response-model-safe (no leaking internal fields like hashed passwords).
+- Keep role checks and ownership checks separated and test both.
+- Preserve one public non-auth endpoint (`/api/v1/ping`) for smoke checks.
+
+## Security
+- Never log, return, or expose passwords, hashed passwords, or JWT secrets.
+- New protected endpoints must use authentication dependency and role/ownership policy.
+- Prefer deterministic error responses for unauthorized/forbidden flows (`401` vs `403`).
+
+## Database and Migrations
+- Use Alembic for schema changes; do not rely on runtime `create_all`.
+- Every model change that affects schema requires a migration update.
+- Migration scripts should be idempotent-safe when possible (`checkfirst`, `IF EXISTS`/`IF NOT EXISTS` where appropriate).
+- Keep seed scripts rerunnable (no duplicate record creation).
+
+## Frontend
+- React app should consume backend API using `VITE_API_URL`.
+- Keep auth/session flow simple and readable.
+- Keep login/session UX minimal and functional; frontend role logic is UX-only, not authorization.
+
+## Testing
+- Use pytest.
+- Every test method must start with a docstring in this exact style:
+  """
+  Short description of the test.
+
+  1. Step one...
+  2. Step two...
+  3. Validate expected behavior...
+  4. Validate additional expectation...
+  """
+- Keep assertions explicit and behavior-focused.
+- Cover positive and negative auth flows (invalid credentials, invalid token, forbidden role, ownership violation).
+- If coverage gates are configured, keep them passing.
+
+## Validation Checklist For Changes
+- Backend tests pass: `docker compose run --rm backend uv run pytest`
+- Migrations apply cleanly: `docker compose run --rm backend uv run alembic upgrade head`
+- Seed script runs: `docker compose run --rm backend uv run python -m scripts.seed_data`
+- Stack is healthy: `docker compose up --build -d` and verify backend/frontend endpoints.

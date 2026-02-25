@@ -35,6 +35,9 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://mattilda_user:mattilda_pass@postgres:5432/mattilda_db}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       FRONTEND_URL: http://localhost:${FRONTEND_PORT:-13000}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-super-secret-change-me}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-60}
     ports:
       - "${BACKEND_PORT:-18000}:8000"
     depends_on:

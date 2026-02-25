@@ -11,5 +11,11 @@ dependencies = [
   "pydantic-settings",
   "redis",
   "pytest",
+  "pytest-cov",
   "httpx",
+  "python-jose[cryptography]",
+  "passlib",
+  "python-multipart",
+  "email-validator",
+  "alembic",
 ]
