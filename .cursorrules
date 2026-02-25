@@ -33,6 +33,10 @@
 
 ## Testing
 - Use pytest.
+- Organize tests by scope:
+  - `backend/tests/services`: one test file per service module with small DB-backed behavior tests.
+  - `backend/tests/endpoints`: one test file per route module with focused request/response and auth contract checks.
+  - `backend/tests/end2end`: cross-endpoint journey tests only.
 - Every test method must start with a docstring in this exact style:
   """
   Short description of the test.

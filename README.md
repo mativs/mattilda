@@ -12,6 +12,7 @@ Starter environment for a take-home exercise with:
 - API docs: OpenAPI/Swagger via FastAPI
 - Directory style: Hexagonal architecture-inspired layering
 - Multi-tenant model: School-based isolation with PostgreSQL RLS
+- Student model: many-to-many user/student and student/school associations
 
 ## Project structure
 
@@ -108,15 +109,31 @@ Ensure both `uv` and Docker are available locally before running tests.
 - Frontend fetches `GET /api/v1/users/me` and receives school memberships with per-school roles.
 - Frontend selects one active school and sends `X-School-Id` in school-scoped requests.
 - Backend validates membership and school roles and binds tenant context for PostgreSQL RLS.
+- Soft deletes are applied to `users`, `schools`, and `students` (`deleted_at`).
 
 ## School endpoints
 
 - `GET /api/v1/schools`
 - Returns only schools where the user has memberships.
-- `POST /api/v1/schools` (authenticated users)
+- `POST /api/v1/schools` (school `admin` in active school)
+- Creating a school auto-links the creator as `admin` in that new school.
 - `GET /api/v1/schools/{school_id}` (requires matching `X-School-Id`)
-- `PUT /api/v1/schools/{school_id}` (requires school role: `director` or `admin`)
-- `DELETE /api/v1/schools/{school_id}` (requires school role: `director` or `admin`)
+- `PUT /api/v1/schools/{school_id}` (requires school role: `admin`)
+- `DELETE /api/v1/schools/{school_id}` (requires school role: `admin`, soft delete)
+- `POST /api/v1/schools/{school_id}/users` (associate user+role to school, admin only)
+- `DELETE /api/v1/schools/{school_id}/users/{user_id}` (deassociate user from school, admin only)
+
+## Student endpoints
+
+- `GET /api/v1/students` (role-aware in active school: admin sees all, non-admin sees only own associated students)
+- `POST /api/v1/students` (create student, admin only; auto-associates student to active school)
+- `GET /api/v1/students/{student_id}` (admin only)
+- `PUT /api/v1/students/{student_id}` (admin only)
+- `DELETE /api/v1/students/{student_id}` (soft delete, admin only)
+- `POST /api/v1/students/{student_id}/users` and `DELETE /.../users/{user_id}` (associate/deassociate user-student, admin only)
+- `POST /api/v1/students/{student_id}/schools` and `DELETE /.../schools/{school_id}` (associate/deassociate student-school, admin only)
+
+Frontend admin association actions for user-school and student-school use the active school session (`X-School-Id`) as context.
 
 ## Makefile shortcuts
 
@@ -143,5 +160,6 @@ And also creates:
 
 - `north-high` and `south-high` schools
 - Per-school memberships and roles for seeded users
+- Sample students linked to users and schools
 
 Use the frontend login form at `http://localhost:13000` to verify authenticated session and the dummy home page.

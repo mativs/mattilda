@@ -16,11 +16,15 @@ class TimestampMixin:
     )
 
 
+class SoftDeleteMixin:
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+
+
 class TenantScopedMixin:
     school_id: Mapped[int] = mapped_column(ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
 
 
-class User(TimestampMixin, Base):
+class User(SoftDeleteMixin, TimestampMixin, Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -34,9 +38,14 @@ class User(TimestampMixin, Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    student_links: Mapped[list["UserStudent"]] = relationship(
+        "UserStudent",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
-class School(TimestampMixin, Base):
+class School(SoftDeleteMixin, TimestampMixin, Base):
     __tablename__ = "schools"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -51,6 +60,11 @@ class School(TimestampMixin, Base):
     )
     dummy_records: Mapped[list["DummyRecord"]] = relationship(
         "DummyRecord",
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )
+    student_links: Mapped[list["StudentSchool"]] = relationship(
+        "StudentSchool",
         back_populates="school",
         cascade="all, delete-orphan",
     )
@@ -80,6 +94,50 @@ class UserProfile(TimestampMixin, Base):
     address: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     user: Mapped[User] = relationship("User", back_populates="profile")
+
+
+class Student(SoftDeleteMixin, TimestampMixin, Base):
+    __tablename__ = "students"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    first_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    last_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    external_id: Mapped[str | None] = mapped_column(String(100), nullable=True, unique=True)
+
+    user_links: Mapped[list["UserStudent"]] = relationship(
+        "UserStudent",
+        back_populates="student",
+        cascade="all, delete-orphan",
+    )
+    school_links: Mapped[list["StudentSchool"]] = relationship(
+        "StudentSchool",
+        back_populates="student",
+        cascade="all, delete-orphan",
+    )
+
+
+class UserStudent(TimestampMixin, Base):
+    __tablename__ = "user_students"
+    __table_args__ = (UniqueConstraint("user_id", "student_id", name="uq_user_student"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    user: Mapped[User] = relationship("User", back_populates="student_links")
+    student: Mapped[Student] = relationship("Student", back_populates="user_links")
+
+
+class StudentSchool(TimestampMixin, Base):
+    __tablename__ = "student_schools"
+    __table_args__ = (UniqueConstraint("student_id", "school_id", name="uq_student_school"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    student: Mapped[Student] = relationship("Student", back_populates="school_links")
+    school: Mapped[School] = relationship("School", back_populates="student_links")
 
 
 class DummyRecord(TenantScopedMixin, TimestampMixin, Base):

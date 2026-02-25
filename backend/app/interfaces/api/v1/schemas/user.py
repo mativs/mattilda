@@ -38,6 +38,14 @@ class UserSchoolRolesResponse(BaseModel):
     roles: list[UserRole]
 
 
+class UserStudentResponse(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    external_id: str | None = None
+    school_ids: list[int] = Field(default_factory=list)
+
+
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
@@ -62,3 +70,4 @@ class UserResponse(BaseModel):
     updated_at: datetime
     profile: UserProfileResponse
     schools: list[UserSchoolRolesResponse] = Field(default_factory=list)
+    students: list[UserStudentResponse] = Field(default_factory=list)

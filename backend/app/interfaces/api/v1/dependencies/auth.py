@@ -18,7 +18,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user_id is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication token")
     user = db.get(User, user_id)
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or user.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
     db.execute(text("SELECT set_config('app.current_user_id', :user_id, true)"), {"user_id": str(user.id)})
     return user
@@ -42,7 +42,7 @@ def get_current_school(
     db: Session = Depends(get_db),
 ) -> School:
     school = db.get(School, school_id)
-    if school is None:
+    if school is None or school.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
     db.execute(text("SELECT set_config('app.current_school_id', :school_id, true)"), {"school_id": str(school.id)})
     return school
@@ -79,6 +79,10 @@ def require_school_roles(allowed_roles: list[UserRole]) -> Callable:
         return current_user
 
     return checker
+
+
+def require_school_admin(current_user: User = Depends(require_school_roles([UserRole.admin]))) -> User:
+    return current_user
 
 
 def require_self_or_school_roles(user_id_param: str, allowed_roles: list[UserRole]) -> Callable:

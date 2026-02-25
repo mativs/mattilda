@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.application.services.security_service import hash_password
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import School, User, UserProfile, UserSchoolRole
+from app.infrastructure.db.models import School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
 from app.infrastructure.db.session import SessionLocal
 
 
@@ -48,6 +48,34 @@ def create_membership_if_missing(db: Session, user_id: int, school_id: int, role
     db.add(UserSchoolRole(user_id=user_id, school_id=school_id, role=role.value))
 
 
+def create_student_if_missing(db: Session, first_name: str, last_name: str, external_id: str) -> Student:
+    student = db.execute(select(Student).where(Student.external_id == external_id, Student.deleted_at.is_(None))).scalar_one_or_none()
+    if student is not None:
+        return student
+    student = Student(first_name=first_name, last_name=last_name, external_id=external_id)
+    db.add(student)
+    db.flush()
+    return student
+
+
+def associate_student_school_if_missing(db: Session, student_id: int, school_id: int) -> None:
+    existing = db.execute(
+        select(StudentSchool).where(StudentSchool.student_id == student_id, StudentSchool.school_id == school_id)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return
+    db.add(StudentSchool(student_id=student_id, school_id=school_id))
+
+
+def associate_user_student_if_missing(db: Session, user_id: int, student_id: int) -> None:
+    existing = db.execute(
+        select(UserStudent).where(UserStudent.user_id == user_id, UserStudent.student_id == student_id)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return
+    db.add(UserStudent(user_id=user_id, student_id=student_id))
+
+
 def main() -> None:
     db = SessionLocal()
     try:
@@ -73,11 +101,21 @@ def main() -> None:
             profile=("Student", "User"),
         )
 
-        create_membership_if_missing(db=db, user_id=admin.id, school_id=north_school.id, role=UserRole.director)
-        create_membership_if_missing(db=db, user_id=admin.id, school_id=south_school.id, role=UserRole.director)
+        create_membership_if_missing(db=db, user_id=admin.id, school_id=north_school.id, role=UserRole.admin)
+        create_membership_if_missing(db=db, user_id=admin.id, school_id=south_school.id, role=UserRole.admin)
         create_membership_if_missing(db=db, user_id=teacher.id, school_id=north_school.id, role=UserRole.teacher)
         create_membership_if_missing(db=db, user_id=teacher.id, school_id=south_school.id, role=UserRole.teacher)
         create_membership_if_missing(db=db, user_id=student.id, school_id=north_school.id, role=UserRole.student)
+
+        child_one = create_student_if_missing(db=db, first_name="Alice", last_name="Student", external_id="STU-001")
+        child_two = create_student_if_missing(db=db, first_name="Bob", last_name="Student", external_id="STU-002")
+
+        associate_student_school_if_missing(db=db, student_id=child_one.id, school_id=north_school.id)
+        associate_student_school_if_missing(db=db, student_id=child_two.id, school_id=north_school.id)
+        associate_student_school_if_missing(db=db, student_id=child_two.id, school_id=south_school.id)
+        associate_user_student_if_missing(db=db, user_id=student.id, student_id=child_one.id)
+        associate_user_student_if_missing(db=db, user_id=student.id, student_id=child_two.id)
+        associate_user_student_if_missing(db=db, user_id=teacher.id, student_id=child_two.id)
 
         db.commit()
     finally:

@@ -6,7 +6,7 @@ MIGRATE_ARGS ?=
 SEED_ARGS ?=
 LOGS_SERVICE ?=
 
-.PHONY: help init-env check-uv up down build restart ps logs test test-subset migrate seed shell clean
+.PHONY: help init-env check-uv up down build restart reset ps logs test test-subset migrate seed shell clean
 
 help:
 	@echo "Available targets:"
@@ -16,6 +16,7 @@ help:
 	@echo "  make down              # Stop stack"
 	@echo "  make build             # Build images"
 	@echo "  make restart           # Restart stack (down + up)"
+	@echo "  make reset             # Full reset: clean + up + migrate + seed"
 	@echo "  make ps                # Show service status"
 	@echo "  make logs              # Show logs (set LOGS_SERVICE=backend)"
 	@echo "  make test [paths...]   # Run backend tests, optional positional test paths"
@@ -42,6 +43,8 @@ build:
 	$(COMPOSE) build
 
 restart: down up
+
+reset: clean up migrate seed
 
 ps:
 	$(COMPOSE) ps

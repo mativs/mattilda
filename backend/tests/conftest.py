@@ -11,7 +11,7 @@ from testcontainers.postgres import PostgresContainer
 
 from app.application.services.security_service import hash_password
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import DummyRecord, School, User, UserProfile, UserSchoolRole
+from app.infrastructure.db.models import DummyRecord, School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
 from app.infrastructure.db.session import get_db
 from app.main import app
 
@@ -21,7 +21,7 @@ class FakeRedisClient:
         return True
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def postgres_url():
     with PostgresContainer("postgres:16-alpine") as postgres:
         url = postgres.get_connection_url().replace("postgresql://", "postgresql+psycopg2://", 1)
@@ -37,14 +37,39 @@ def run_migrations(database_url: str) -> None:
     command.upgrade(alembic_config, "head")
 
 
-@pytest.fixture
-def db_session(monkeypatch, postgres_url):
+@pytest.fixture(scope="session")
+def engine(postgres_url):
     engine = create_engine(postgres_url, future=True)
     with engine.begin() as connection:
         connection.execute(text("DROP SCHEMA public CASCADE"))
         connection.execute(text("CREATE SCHEMA public"))
     run_migrations(database_url=postgres_url)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
 
+
+@pytest.fixture(autouse=True)
+def clean_database(engine):
+    with engine.begin() as connection:
+        tables = connection.execute(
+            text(
+                """
+                SELECT tablename
+                FROM pg_tables
+                WHERE schemaname = 'public' AND tablename <> 'alembic_version'
+                ORDER BY tablename
+                """
+            )
+        ).scalars().all()
+        if tables:
+            quoted_tables = ", ".join(f'"{table}"' for table in tables)
+            connection.execute(text(f"TRUNCATE TABLE {quoted_tables} RESTART IDENTITY CASCADE"))
+
+
+@pytest.fixture
+def db_session(monkeypatch, engine):
     testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = testing_session_local()
     monkeypatch.setattr("app.interfaces.api.v1.routes.ping.get_redis_client", lambda: FakeRedisClient())
@@ -52,7 +77,6 @@ def db_session(monkeypatch, postgres_url):
         yield session
     finally:
         session.close()
-        engine.dispose()
 
 
 @pytest.fixture
@@ -105,10 +129,23 @@ def seeded_users(db_session):
 
     db_session.add_all(
         [
-            UserSchoolRole(user_id=admin.id, school_id=north_school.id, role=UserRole.director.value),
-            UserSchoolRole(user_id=admin.id, school_id=south_school.id, role=UserRole.director.value),
+            UserSchoolRole(user_id=admin.id, school_id=north_school.id, role=UserRole.admin.value),
+            UserSchoolRole(user_id=admin.id, school_id=south_school.id, role=UserRole.admin.value),
             UserSchoolRole(user_id=teacher.id, school_id=north_school.id, role=UserRole.teacher.value),
             UserSchoolRole(user_id=student.id, school_id=north_school.id, role=UserRole.student.value),
+        ]
+    )
+    first_child = Student(first_name="Alice", last_name="Child", external_id="STU-001")
+    second_child = Student(first_name="Bob", last_name="Child", external_id="STU-002")
+    db_session.add_all([first_child, second_child])
+    db_session.flush()
+    db_session.add_all(
+        [
+            StudentSchool(student_id=first_child.id, school_id=north_school.id),
+            StudentSchool(student_id=second_child.id, school_id=north_school.id),
+            StudentSchool(student_id=second_child.id, school_id=south_school.id),
+            UserStudent(user_id=student.id, student_id=first_child.id),
+            UserStudent(user_id=student.id, student_id=second_child.id),
         ]
     )
     db_session.add_all(
@@ -123,6 +160,8 @@ def seeded_users(db_session):
         "admin": admin,
         "student": student,
         "teacher": teacher,
+        "child_one": first_child,
+        "child_two": second_child,
         "north_school": north_school,
         "south_school": south_school,
     }

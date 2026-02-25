@@ -28,3 +28,7 @@ Before choosing an authorization model, the following scenarios were mapped:
 ## Scope disclaimer
 
 Due to the scope and time constraints of this take-home project, a platform-level superadmin is intentionally not implemented. All authorization is school-scoped through memberships and per-school roles.
+
+## Soft delete policy
+
+For auditability and historical consistency (for example, invoice trails), `users`, `schools`, and `students` use soft delete (`deleted_at`). In this scope, deleted users cannot be recreated with the same email.
