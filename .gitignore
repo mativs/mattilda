@@ -1,0 +1,15 @@
+.DS_Store
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+
+node_modules/
+dist/
+.vite/
+
+backend/.venv/
+backend/.coverage
+backend/htmlcov/
