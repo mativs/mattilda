@@ -17,6 +17,13 @@
 - Keep hexagonal exception boundaries:
   - Application/services must use framework-agnostic exceptions only.
   - FastAPI `HTTPException` and HTTP status mapping belong to interface adapters/handlers.
+- For entities with associations (users/students), keep association diff/sync in backend services.
+  - `PUT` update contracts should accept partial `associations.add/remove` operations.
+  - Frontend should send desired deltas; backend computes and applies valid changes.
+- Standardize list endpoints (`/users`, `/schools`, `/students`) with shared pagination/search contracts:
+  - Query params: `offset`, `limit`, `search`.
+  - Response envelope: `{ items, pagination }`.
+  - Use shared pagination/search helpers instead of duplicating ad-hoc query/count logic.
 
 ## Security
 - Never log, return, or expose passwords, hashed passwords, or JWT secrets.
@@ -33,6 +40,7 @@
 - React app should consume backend API using `VITE_API_URL`.
 - Keep auth/session flow simple and readable.
 - Keep login/session UX minimal and functional; frontend role logic is UX-only, not authorization.
+- For list endpoints that return paginated envelopes, consume `payload.items` (not raw array payloads).
 
 ## Testing
 - Use pytest.

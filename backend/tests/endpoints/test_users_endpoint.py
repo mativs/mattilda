@@ -1,5 +1,5 @@
 from tests.helpers.auth import auth_header, school_header, token_for_user
-from tests.helpers.factories import add_membership, create_user
+from tests.helpers.factories import add_membership, create_school, create_user
 from app.domain.roles import UserRole
 
 
@@ -23,14 +23,70 @@ def test_get_users_returns_200_for_school_admin(client, seeded_users):
     1. Build admin token and active school header.
     2. Call users list endpoint once.
     3. Receive successful response.
-    4. Validate payload is a list.
+    4. Validate payload uses paginated envelope.
     """
     response = client.get(
         "/api/v1/users",
         headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
     )
     assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    payload = response.json()
+    assert isinstance(payload["items"], list)
+    assert payload["pagination"]["offset"] == 0
+    assert payload["pagination"]["limit"] == 20
+
+
+def test_get_users_applies_limit_and_offset(client, seeded_users, db_session):
+    """
+    Validate users list pagination slicing.
+
+    1. Seed two extra school members in active school.
+    2. Call users list endpoint with offset and limit once.
+    3. Receive successful paginated response.
+    4. Validate returned item count and pagination metadata.
+    """
+    first = create_user(db_session, "users-page-1@example.com")
+    second = create_user(db_session, "users-page-2@example.com")
+    add_membership(db_session, first.id, seeded_users["north_school"].id, UserRole.teacher)
+    add_membership(db_session, second.id, seeded_users["north_school"].id, UserRole.teacher)
+    response = client.get(
+        "/api/v1/users?offset=1&limit=1",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 1
+    assert payload["pagination"]["offset"] == 1
+    assert payload["pagination"]["limit"] == 1
+    assert payload["pagination"]["filtered_total"] >= 3
+
+
+def test_get_users_applies_search_on_email_and_profile(client, seeded_users, db_session):
+    """
+    Validate users list search filtering behavior.
+
+    1. Seed one matching and one non-matching school member.
+    2. Call users list endpoint with search param once.
+    3. Receive successful paginated response.
+    4. Validate only matching user is returned.
+    """
+    matching = create_user(db_session, "needle-user@example.com")
+    matching.profile.first_name = "Needle"
+    matching.profile.last_name = "Person"
+    non_matching = create_user(db_session, "other-user@example.com")
+    add_membership(db_session, matching.id, seeded_users["north_school"].id, UserRole.teacher)
+    add_membership(db_session, non_matching.id, seeded_users["north_school"].id, UserRole.teacher)
+    db_session.commit()
+    response = client.get(
+        "/api/v1/users?search=needle",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    emails = {item["email"] for item in payload["items"]}
+    assert "needle-user@example.com" in emails
+    assert "other-user@example.com" not in emails
+    assert payload["pagination"]["filtered_total"] <= payload["pagination"]["total"]
 
 
 def test_get_users_returns_403_for_non_admin(client, seeded_users):
@@ -176,6 +232,37 @@ def test_update_user_returns_200_for_admin(client, seeded_users, db_session):
     )
     assert response.status_code == 200
     assert response.json()["email"] == "updated-target@example.com"
+
+
+def test_update_user_applies_association_sync_payload(client, seeded_users, db_session):
+    """
+    Validate user update applies association add/remove payload.
+
+    1. Seed target user with one school-role membership.
+    2. Call update user endpoint with associations add/remove.
+    3. Receive successful response payload.
+    4. Validate memberships reflect requested delta.
+    """
+    target = create_user(db_session, "assoc-target@example.com")
+    old_school = create_school(db_session, "Old Assoc School", "old-assoc-school")
+    new_school = create_school(db_session, "New Assoc School", "new-assoc-school")
+    add_membership(db_session, target.id, old_school.id, UserRole.teacher)
+    add_membership(db_session, seeded_users["admin"].id, old_school.id, UserRole.admin)
+    add_membership(db_session, seeded_users["admin"].id, new_school.id, UserRole.admin)
+    response = client.put(
+        f"/api/v1/users/{target.id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={
+            "associations": {
+                "add": {"school_roles": [{"school_id": new_school.id, "role": "admin"}]},
+                "remove": {"school_roles": [{"school_id": old_school.id, "role": "teacher"}]},
+            }
+        },
+    )
+    assert response.status_code == 200
+    memberships = {(school["school_id"], role) for school in response.json()["schools"] for role in school["roles"]}
+    assert (old_school.id, "teacher") not in memberships
+    assert (new_school.id, "admin") in memberships
 
 
 def test_update_user_returns_404_for_missing_user(client, seeded_users):

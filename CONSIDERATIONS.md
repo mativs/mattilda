@@ -32,3 +32,9 @@ Due to the scope and time constraints of this take-home project, a platform-leve
 ## Soft delete policy
 
 For auditability and historical consistency (for example, invoice trails), `users`, `schools`, and `students` use soft delete (`deleted_at`). In this scope, deleted users cannot be recreated with the same email.
+
+## Search and pagination considerations
+
+List endpoints use offset/limit pagination and a shared `search` parameter with declarative per-resource fields (users: email/name, schools: name/slug, students: first/last/external_id). Search currently uses standard `ILIKE` predicates without PostgreSQL extensions to keep deployment/setup simple for this scope.
+
+If dataset size or latency requirements increase, the next optimization step is adopting `pg_trgm` with GIN indexes for search-heavy columns.

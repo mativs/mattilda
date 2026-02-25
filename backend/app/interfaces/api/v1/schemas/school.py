@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.roles import UserRole
+from app.interfaces.api.v1.schemas.pagination import PaginationMeta
 
 
 class SchoolMemberAssignment(BaseModel):
@@ -40,3 +41,8 @@ class SchoolResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     members: list[SchoolMemberResponse]
+
+
+class SchoolListResponse(BaseModel):
+    items: list[SchoolResponse]
+    pagination: PaginationMeta

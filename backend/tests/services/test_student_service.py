@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from app.application.errors import ConflictError, NotFoundError
@@ -10,8 +12,10 @@ from app.application.services.student_service import (
     deassociate_user_student,
     delete_student,
     get_student_by_id,
+    get_visible_student_for_user,
     list_students_for_school,
     list_students_for_user_in_school,
+    serialize_student_response,
     update_student,
 )
 from app.interfaces.api.v1.schemas.student import StudentCreate, StudentUpdate
@@ -361,3 +365,165 @@ def test_deassociate_student_school_raises_for_missing_link(db_session):
     with pytest.raises(NotFoundError) as exc:
         deassociate_student_school(db_session, student.id, school.id)
     assert str(exc.value) == "Association not found"
+
+
+def test_get_visible_student_for_user_returns_student_for_admin(db_session):
+    """
+    Validate get_visible_student_for_user admin visibility.
+
+    1. Seed a school and linked student.
+    2. Call get_visible_student_for_user with admin flag true.
+    3. Validate helper returns a student object.
+    4. Validate returned student id matches target.
+    """
+    user = factory_create_user(db_session, "admin-visible@example.com")
+    school = create_school(db_session, "Admin School", "admin-school")
+    student = factory_create_student(db_session, "Visible", "Admin", "VIS-ADM-001")
+    link_student_school(db_session, student.id, school.id)
+    visible = get_visible_student_for_user(db_session, student.id, school.id, user.id, is_admin=True)
+    assert visible is not None
+    assert visible.id == student.id
+
+
+def test_get_visible_student_for_user_returns_none_for_non_associated_user(db_session):
+    """
+    Validate get_visible_student_for_user hidden student branch.
+
+    1. Seed a school and linked student.
+    2. Call get_visible_student_for_user with non-admin user not associated.
+    3. Validate helper returns no result.
+    4. Validate hidden student is not exposed.
+    """
+    user = factory_create_user(db_session, "hidden-student@example.com")
+    school = create_school(db_session, "Hidden School", "hidden-school")
+    student = factory_create_student(db_session, "Hidden", "Student", "VIS-HID-001")
+    link_student_school(db_session, student.id, school.id)
+    visible = get_visible_student_for_user(db_session, student.id, school.id, user.id, is_admin=False)
+    assert visible is None
+
+
+def test_serialize_student_response_includes_association_ids_and_refs(db_session):
+    """
+    Validate serialize_student_response includes user and school ids.
+
+    1. Seed user, school, and student entities.
+    2. Link student to user and school.
+    3. Call serialize_student_response once.
+    4. Validate serialized ids and reference payloads include linked entities.
+    """
+    user = factory_create_user(db_session, "serialize-student@example.com")
+    school = create_school(db_session, "Serialize School", "serialize-school")
+    student = factory_create_student(db_session, "Serialize", "Student", "SER-STU-001")
+    link_student_school(db_session, student.id, school.id)
+    link_user_student(db_session, user.id, student.id)
+    serialized = serialize_student_response(student)
+    assert user.id in serialized["user_ids"]
+    assert school.id in serialized["school_ids"]
+    assert any(item["id"] == user.id and item["email"] == user.email for item in serialized["users"])
+    assert any(item["id"] == school.id and item["name"] == school.name for item in serialized["schools"])
+
+
+def test_serialize_student_response_excludes_deleted_user_and_school_refs(db_session):
+    """
+    Validate serialize_student_response skips deleted linked references.
+
+    1. Seed user, school, and student with active links.
+    2. Mark linked user and school as soft-deleted.
+    3. Call serialize_student_response once.
+    4. Validate deleted links are excluded from ids and refs.
+    """
+    user = factory_create_user(db_session, "serialize-deleted@example.com")
+    school = create_school(db_session, "Deleted Serialize School", "deleted-serialize-school")
+    student = factory_create_student(db_session, "Serialize", "Deleted", "SER-STU-002")
+    link_student_school(db_session, student.id, school.id)
+    link_user_student(db_session, user.id, student.id)
+    user.deleted_at = datetime.now(timezone.utc)
+    school.deleted_at = datetime.now(timezone.utc)
+    db_session.commit()
+    serialized = serialize_student_response(student)
+    assert user.id not in serialized["user_ids"]
+    assert school.id not in serialized["school_ids"]
+    assert all(item["id"] != user.id for item in serialized["users"])
+    assert all(item["id"] != school.id for item in serialized["schools"])
+
+
+def test_update_student_applies_association_add_and_remove_operations(db_session):
+    """
+    Validate update_student association add/remove partial sync.
+
+    1. Seed student with existing user and school links.
+    2. Call update_student with add/remove association payload.
+    3. Serialize updated student response.
+    4. Validate removed links are gone and added links are present.
+    """
+    student = factory_create_student(db_session, "Assoc", "Update", "ASSOC-UPD-001")
+    old_user = factory_create_user(db_session, "old-user@example.com")
+    new_user = factory_create_user(db_session, "new-user@example.com")
+    old_school = create_school(db_session, "Old School", "old-school")
+    new_school = create_school(db_session, "New School", "new-school")
+    link_user_student(db_session, old_user.id, student.id)
+    link_student_school(db_session, student.id, old_school.id)
+    updated = update_student(
+        db_session,
+        student,
+        StudentUpdate(
+            associations={
+                "add": {"user_ids": [new_user.id], "school_ids": [new_school.id]},
+                "remove": {"user_ids": [old_user.id], "school_ids": [old_school.id]},
+            }
+        ),
+    )
+    serialized = serialize_student_response(updated)
+    assert old_user.id not in serialized["user_ids"]
+    assert new_user.id in serialized["user_ids"]
+    assert old_school.id not in serialized["school_ids"]
+    assert new_school.id in serialized["school_ids"]
+
+
+def test_update_student_raises_not_found_for_missing_user_in_association_add(db_session):
+    """
+    Validate update_student association add missing-user branch.
+
+    1. Seed student entity for update.
+    2. Call update_student with unknown user id in add payload.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
+    """
+    student = factory_create_student(db_session, "Missing", "User", "ASSOC-MISS-USER-001")
+    with pytest.raises(NotFoundError) as exc:
+        update_student(
+            db_session,
+            student,
+            StudentUpdate(
+                associations={
+                    "add": {"user_ids": [999999], "school_ids": []},
+                    "remove": {"user_ids": [], "school_ids": []},
+                }
+            ),
+        )
+    assert str(exc.value) == "User not found"
+
+
+def test_update_student_raises_not_found_for_missing_school_in_association_add(db_session):
+    """
+    Validate update_student association add missing-school branch.
+
+    1. Seed student and one valid user for update payload.
+    2. Call update_student with unknown school id in add payload.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
+    """
+    student = factory_create_student(db_session, "Missing", "School", "ASSOC-MISS-SCHOOL-001")
+    user = factory_create_user(db_session, "missing-school-user@example.com")
+    with pytest.raises(NotFoundError) as exc:
+        update_student(
+            db_session,
+            student,
+            StudentUpdate(
+                associations={
+                    "add": {"user_ids": [user.id], "school_ids": [999999]},
+                    "remove": {"user_ids": [], "school_ids": []},
+                }
+            ),
+        )
+    assert str(exc.value) == "School not found"

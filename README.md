@@ -141,13 +141,56 @@ make quality
 
 - `GET /api/v1/students` (role-aware in active school: admin sees all, non-admin sees only own associated students)
 - `POST /api/v1/students` (create student, admin only; auto-associates student to active school)
-- `GET /api/v1/students/{student_id}` (admin only)
-- `PUT /api/v1/students/{student_id}` (admin only)
+- `GET /api/v1/students/{student_id}` (visible when admin in active school, or when student is associated with current user; hidden/non-visible records return `404`)
+- `PUT /api/v1/students/{student_id}` (admin only; supports partial association sync via `associations.add/remove`)
 - `DELETE /api/v1/students/{student_id}` (soft delete, admin only)
 - `POST /api/v1/students/{student_id}/users` and `DELETE /.../users/{user_id}` (associate/deassociate user-student, admin only)
 - `POST /api/v1/students/{student_id}/schools` and `DELETE /.../schools/{school_id}` (associate/deassociate student-school, admin only)
 
 Frontend admin association actions for user-school and student-school use the active school session (`X-School-Id`) as context.
+
+### Partial association sync payloads
+
+`PUT /api/v1/users/{user_id}` can include:
+
+```json
+{
+  "associations": {
+    "add": { "school_roles": [{ "school_id": 1, "role": "teacher" }] },
+    "remove": { "school_roles": [{ "school_id": 2, "role": "student" }] }
+  }
+}
+```
+
+`PUT /api/v1/students/{student_id}` can include:
+
+```json
+{
+  "associations": {
+    "add": { "user_ids": [10], "school_ids": [3] },
+    "remove": { "user_ids": [11], "school_ids": [2] }
+  }
+}
+```
+
+## Frontend navigation
+
+- Default route after login: `/dashboard`.
+- Sidebar sections:
+  - `Dashboard`
+  - `Configuration` (admin only): `Users`, `Students`, `Schools`
+  - `Students` (one submenu item per student associated with current user in active school)
+- Top-right area includes:
+  - school selector (switches active `X-School-Id` context)
+  - avatar shortcut to `/profile`
+- Configuration lists (`users`, `students`, `schools`) support:
+  - server-side search and pagination (`offset`, `limit`, `search`)
+  - create/edit modals
+  - row delete actions with confirmation
+- User create/edit modals include school-role assignment management:
+  - table of assigned school + role rows
+  - school selector + role selector + add button
+  - remove action per row
 
 ## Makefile shortcuts
 

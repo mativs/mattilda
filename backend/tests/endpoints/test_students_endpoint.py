@@ -9,14 +9,17 @@ def test_get_students_returns_200_for_school_admin(client, seeded_users):
     1. Build admin school-scoped header.
     2. Call students list endpoint once.
     3. Receive successful response.
-    4. Validate payload type is list.
+    4. Validate payload uses paginated envelope.
     """
     response = client.get(
         "/api/v1/students",
         headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
     )
     assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    payload = response.json()
+    assert isinstance(payload["items"], list)
+    assert payload["pagination"]["offset"] == 0
+    assert payload["pagination"]["limit"] == 20
 
 
 def test_get_students_returns_200_for_non_admin_with_associations(client, seeded_users):
@@ -33,8 +36,58 @@ def test_get_students_returns_200_for_non_admin_with_associations(client, seeded
         headers=school_header(token_for_user(seeded_users["student"].id), seeded_users["north_school"].id),
     )
     assert response.status_code == 200
-    ids = {item["id"] for item in response.json()}
+    ids = {item["id"] for item in response.json()["items"]}
     assert seeded_users["child_one"].id in ids
+
+
+def test_get_students_applies_limit_and_offset(client, seeded_users, db_session):
+    """
+    Validate students list pagination slicing for admins.
+
+    1. Seed additional students linked to active school.
+    2. Call students list endpoint with offset and limit once.
+    3. Receive successful paginated response.
+    4. Validate item count and pagination metadata.
+    """
+    student_one = create_student(db_session, "Paginated", "One", "PAG-001")
+    student_two = create_student(db_session, "Paginated", "Two", "PAG-002")
+    link_student_school(db_session, student_one.id, seeded_users["north_school"].id)
+    link_student_school(db_session, student_two.id, seeded_users["north_school"].id)
+    response = client.get(
+        "/api/v1/students?offset=1&limit=1",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 1
+    assert payload["pagination"]["offset"] == 1
+    assert payload["pagination"]["limit"] == 1
+    assert payload["pagination"]["filtered_total"] >= 3
+
+
+def test_get_students_applies_search_on_configured_fields(client, seeded_users, db_session):
+    """
+    Validate students list search filtering behavior.
+
+    1. Seed one matching and one non-matching student in active school.
+    2. Call students list endpoint with search param once.
+    3. Receive successful paginated response.
+    4. Validate only matching student is returned.
+    """
+    matching = create_student(db_session, "Needle", "Kid", "SEARCH-001")
+    non_matching = create_student(db_session, "Other", "Kid", "SEARCH-002")
+    link_student_school(db_session, matching.id, seeded_users["north_school"].id)
+    link_student_school(db_session, non_matching.id, seeded_users["north_school"].id)
+    response = client.get(
+        "/api/v1/students?search=needle",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    first_names = {item["first_name"] for item in payload["items"]}
+    assert "Needle" in first_names
+    assert "Other" not in first_names
+    assert payload["pagination"]["filtered_total"] <= payload["pagination"]["total"]
 
 
 def test_get_students_returns_403_for_user_without_school_membership(client, seeded_users):
@@ -122,6 +175,59 @@ def test_get_student_returns_200_for_admin(client, seeded_users):
     assert response.json()["id"] == seeded_users["child_one"].id
 
 
+def test_get_student_returns_association_refs_in_payload(client, seeded_users):
+    """
+    Validate student get-by-id includes association ids.
+
+    1. Build admin school-scoped header.
+    2. Call get student endpoint once.
+    3. Receive successful response payload.
+    4. Validate school/user ids and references are present.
+    """
+    response = client.get(
+        f"/api/v1/students/{seeded_users['child_one'].id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    assert "school_ids" in response.json()
+    assert "user_ids" in response.json()
+    assert "schools" in response.json()
+    assert "users" in response.json()
+
+
+def test_get_student_returns_200_for_associated_non_admin(client, seeded_users):
+    """
+    Validate student get-by-id success for associated non-admin.
+
+    1. Build associated student user school-scoped header.
+    2. Call get student endpoint for linked student once.
+    3. Receive successful response.
+    4. Validate returned student id.
+    """
+    response = client.get(
+        f"/api/v1/students/{seeded_users['child_one'].id}",
+        headers=school_header(token_for_user(seeded_users["student"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == seeded_users["child_one"].id
+
+
+def test_get_student_returns_404_for_existing_student_not_visible_to_user(client, seeded_users):
+    """
+    Validate student get-by-id hidden student branch.
+
+    1. Build non-admin user header without association to target student.
+    2. Call get student endpoint once for existing student.
+    3. Receive not found response.
+    4. Validate hidden records return 404.
+    """
+    response = client.get(
+        f"/api/v1/students/{seeded_users['child_one'].id}",
+        headers=school_header(token_for_user(seeded_users["teacher"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 404
+
+
 def test_get_student_returns_404_for_missing_student(client, seeded_users):
     """
     Validate student get-by-id missing branch.
@@ -156,6 +262,36 @@ def test_update_student_returns_200_for_admin(client, seeded_users, db_session):
     )
     assert response.status_code == 200
     assert response.json()["first_name"] == "Updated"
+
+
+def test_update_student_applies_association_sync_payload(client, seeded_users, db_session):
+    """
+    Validate student update applies association add/remove payload.
+
+    1. Seed student with one user link and one school link.
+    2. Call update endpoint with association add/remove payload.
+    3. Receive successful response payload.
+    4. Validate updated association ids reflect requested delta.
+    """
+    student = create_student(db_session, "Assoc", "Target", "ASSOC-EP-001")
+    other_school = seeded_users["south_school"]
+    link_student_school(db_session, student.id, seeded_users["north_school"].id)
+    link_user_student(db_session, seeded_users["teacher"].id, student.id)
+    response = client.put(
+        f"/api/v1/students/{student.id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={
+            "associations": {
+                "add": {"user_ids": [seeded_users["student"].id], "school_ids": [other_school.id]},
+                "remove": {"user_ids": [seeded_users["teacher"].id], "school_ids": [seeded_users["north_school"].id]},
+            }
+        },
+    )
+    assert response.status_code == 200
+    assert seeded_users["teacher"].id not in response.json()["user_ids"]
+    assert seeded_users["student"].id in response.json()["user_ids"]
+    assert seeded_users["north_school"].id not in response.json()["school_ids"]
+    assert other_school.id in response.json()["school_ids"]
 
 
 def test_update_student_returns_404_for_missing_student(client, seeded_users):

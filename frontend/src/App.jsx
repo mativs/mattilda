@@ -1,72 +1,1504 @@
 import { useEffect, useMemo, useState } from "react";
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:18000";
 const TOKEN_KEY = "mattilda_token";
 const SCHOOL_KEY = "mattilda_school_id";
 
-export default function App() {
-  const [loadingPublic, setLoadingPublic] = useState(true);
-  const [loadingAuth, setLoadingAuth] = useState(false);
+const DEFAULT_LIMIT = 10;
+const USER_ROLE_OPTIONS = ["admin", "director", "teacher", "student", "parent"];
+
+function usePublicHealth() {
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [payload, setPayload] = useState(null);
-  const [me, setMe] = useState(null);
-  const [activeSchool, setActiveSchool] = useState(null);
-  const [username, setUsername] = useState("admin@example.com");
-  const [password, setPassword] = useState("admin123");
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
-  const [selectedSchoolId, setSelectedSchoolId] = useState(() => localStorage.getItem(SCHOOL_KEY) ?? "");
-  const [students, setStudents] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [adminMessage, setAdminMessage] = useState("");
-  const [newUser, setNewUser] = useState({ email: "", password: "", first_name: "", last_name: "", role: "admin" });
-  const [newSchool, setNewSchool] = useState({ name: "", slug: "" });
-  const [newStudent, setNewStudent] = useState({ first_name: "", last_name: "", external_id: "", user_id: "" });
-  const [linkUserSchool, setLinkUserSchool] = useState({ user_id: "", role: "teacher" });
-  const [linkUserStudent, setLinkUserStudent] = useState({ user_id: "", student_id: "" });
-  const [linkStudentSchool, setLinkStudentSchool] = useState({ student_id: "" });
-  const [updateUser, setUpdateUser] = useState({ user_id: "", email: "", password: "", first_name: "", last_name: "", is_active: "true" });
-  const [updateSchool, setUpdateSchool] = useState({ school_id: "", name: "", slug: "", is_active: "true" });
-  const [updateStudent, setUpdateStudent] = useState({ student_id: "", first_name: "", last_name: "", external_id: "" });
-  const [deleteIds, setDeleteIds] = useState({ user_id: "", school_id: "", student_id: "" });
 
   useEffect(() => {
-    async function load() {
+    async function loadPing() {
       try {
         const response = await fetch(`${API_URL}/api/v1/ping`);
         if (!response.ok) {
           throw new Error(`Request failed with ${response.status}`);
         }
-        const data = await response.json();
-        setPayload(data);
+        setPayload(await response.json());
       } catch (err) {
         setError(err.message);
       } finally {
-        setLoadingPublic(false);
+        setLoading(false);
       }
     }
-
-    load();
+    loadPing();
   }, []);
 
-  const isAuthenticated = useMemo(() => Boolean(token), [token]);
+  return { loading, error, payload };
+}
+
+function LoginPage({ username, setUsername, password, setPassword, loading, onSubmit, error, health }) {
+  return (
+    <main className="login-page">
+      <section className="login-card">
+        <h1>Mattilda</h1>
+        <p>Administrative portal</p>
+        {health.loading && <p className="muted">Checking backend status...</p>}
+        {health.payload && (
+          <p className="muted">
+            API {health.payload.db_connected ? "DB OK" : "DB OFF"} | Redis {health.payload.redis_connected ? "OK" : "OFF"}
+          </p>
+        )}
+        {(error || health.error) && <p className="error">{error || health.error}</p>}
+        <form className="form" onSubmit={onSubmit}>
+          <label>
+            Email
+            <input value={username} onChange={(event) => setUsername(event.target.value)} />
+          </label>
+          <label>
+            Password
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+          </label>
+          <button disabled={loading} type="submit">
+            {loading ? "Signing in..." : "Sign in"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function SectionTitle({ children }) {
+  return <h2 className="section-title">{children}</h2>;
+}
+
+function Modal({ title, children, onClose, onSubmit, submitLabel, danger = false }) {
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <div className="modal-card">
+        <div className="modal-header">
+          <h3>{title}</h3>
+          <button className="ghost" onClick={onClose} type="button">
+            Close
+          </button>
+        </div>
+        <form
+          className="form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit();
+          }}
+        >
+          {children}
+          <div className="modal-actions">
+            <button className="ghost" onClick={onClose} type="button">
+              Cancel
+            </button>
+            <button className={danger ? "danger" : ""} type="submit">
+              {submitLabel}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function DashboardPage({ activeSchool }) {
+  return (
+    <section className="page-card">
+      <SectionTitle>Dashboard</SectionTitle>
+      <p className="muted">This section is intentionally empty for now.</p>
+      {activeSchool && (
+        <p>
+          Active school: <strong>{activeSchool.name}</strong>
+        </p>
+      )}
+    </section>
+  );
+}
+
+function ProfilePage({ me, selectedSchool }) {
+  if (!me) {
+    return null;
+  }
+  return (
+    <section className="page-card">
+      <SectionTitle>My Profile</SectionTitle>
+      <div className="kv-grid">
+        <div>
+          <span className="muted">Email</span>
+          <p>{me.email}</p>
+        </div>
+        <div>
+          <span className="muted">Name</span>
+          <p>
+            {me.profile.first_name} {me.profile.last_name}
+          </p>
+        </div>
+        {selectedSchool && (
+          <div>
+            <span className="muted">Roles in current school</span>
+            <p>{selectedSchool.roles.join(", ")}</p>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function StudentDetailPage({ selectedSchoolId, request }) {
+  const { studentId } = useParams();
+  const [student, setStudent] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadStudent() {
+      if (!selectedSchoolId || !studentId) {
+        return;
+      }
+      setLoading(true);
+      setError("");
+      try {
+        const payload = await request(`/api/v1/students/${studentId}`);
+        setStudent(payload);
+      } catch (err) {
+        setError(err.message);
+        setStudent(null);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadStudent();
+  }, [selectedSchoolId, studentId, request]);
+
+  return (
+    <section className="page-card">
+      <SectionTitle>Student</SectionTitle>
+      {loading && <p className="muted">Loading student...</p>}
+      {error && <p className="error">{error}</p>}
+      {student && (
+        <p>
+          {student.first_name} {student.last_name}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function TableToolbar({ search, onSearch, onCreate }) {
+  return (
+    <div className="toolbar">
+      <input placeholder="Search..." value={search} onChange={(event) => onSearch(event.target.value)} />
+      <button onClick={onCreate} type="button">
+        Create
+      </button>
+    </div>
+  );
+}
+
+function PaginationControls({ pagination, onChange }) {
+  if (!pagination) {
+    return null;
+  }
+  const { offset, limit, filtered_total: filteredTotal, has_next: hasNext, has_prev: hasPrev } = pagination;
+  const start = filteredTotal === 0 ? 0 : offset + 1;
+  const end = Math.min(offset + limit, filteredTotal);
+  return (
+    <div className="pagination">
+      <span className="muted">
+        Showing {start}-{end} of {filteredTotal}
+      </span>
+      <div className="pagination-actions">
+        <button disabled={!hasPrev} onClick={() => onChange(Math.max(0, offset - limit))} type="button">
+          Prev
+        </button>
+        <button disabled={!hasNext} onClick={() => onChange(offset + limit)} type="button">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function UsersConfigPage({ request, selectedSchoolId }) {
+  const [rows, setRows] = useState([]);
+  const [pagination, setPagination] = useState(null);
+  const [search, setSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [schoolOptions, setSchoolOptions] = useState([]);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editUser, setEditUser] = useState(null);
+  const [deleteUser, setDeleteUser] = useState(null);
+  const [createForm, setCreateForm] = useState({ email: "", password: "", first_name: "", last_name: "", is_active: "true" });
+  const [editForm, setEditForm] = useState({ email: "", password: "", first_name: "", last_name: "", is_active: "true" });
+  const [createMembershipRows, setCreateMembershipRows] = useState([]);
+  const [createSchoolToAdd, setCreateSchoolToAdd] = useState("");
+  const [createRoleToAdd, setCreateRoleToAdd] = useState("teacher");
+  const [editMembershipRows, setEditMembershipRows] = useState([]);
+  const [editInitialMembershipRows, setEditInitialMembershipRows] = useState([]);
+  const [editSchoolToAdd, setEditSchoolToAdd] = useState("");
+  const [editRoleToAdd, setEditRoleToAdd] = useState("teacher");
+
+  async function loadUsers() {
+    if (!selectedSchoolId) {
+      return;
+    }
+    try {
+      const query = new URLSearchParams({ offset: String(offset), limit: String(DEFAULT_LIMIT) });
+      if (search.trim()) {
+        query.set("search", search.trim());
+      }
+      const payload = await request(`/api/v1/users?${query.toString()}`);
+      setRows(payload.items ?? []);
+      setPagination(payload.pagination ?? null);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function loadSchoolsOptions() {
+    if (!selectedSchoolId) {
+      return;
+    }
+    try {
+      const payload = await request("/api/v1/schools?offset=0&limit=100");
+      setSchoolOptions(payload.items ?? []);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    setOffset(0);
+  }, [search, selectedSchoolId]);
+
+  useEffect(() => {
+    loadSchoolsOptions();
+  }, [selectedSchoolId]);
+
+  useEffect(() => {
+    loadUsers();
+  }, [offset, selectedSchoolId, search]);
+
+  function sortMembershipRows(values) {
+    return [...values].sort((a, b) => {
+      const schoolA = (a.school_name ?? "").toLowerCase();
+      const schoolB = (b.school_name ?? "").toLowerCase();
+      if (schoolA !== schoolB) {
+        return schoolA.localeCompare(schoolB);
+      }
+      return a.role.localeCompare(b.role);
+    });
+  }
+
+  function membershipKey(value) {
+    return `${value.school_id}:${value.role}`;
+  }
+
+  function schoolNameById(schoolId) {
+    const school = schoolOptions.find((item) => item.id === schoolId);
+    return school ? school.name : `School #${schoolId}`;
+  }
+
+  function addMembershipRow(rowsValue, schoolId, role, schoolName) {
+    const row = { school_id: schoolId, school_name: schoolName, role };
+    if (rowsValue.some((item) => membershipKey(item) === membershipKey(row))) {
+      return rowsValue;
+    }
+    return sortMembershipRows([...rowsValue, row]);
+  }
+
+  function removeMembershipRow(rowsValue, rowToRemove) {
+    return rowsValue.filter((item) => membershipKey(item) !== membershipKey(rowToRemove));
+  }
+
+  function openEdit(user) {
+    setEditUser(user);
+    setEditForm({
+      email: user.email ?? "",
+      password: "",
+      first_name: user.profile?.first_name ?? "",
+      last_name: user.profile?.last_name ?? "",
+      is_active: String(user.is_active),
+    });
+    const flattenedRows = sortMembershipRows(
+      (user.schools ?? []).flatMap((school) =>
+        (school.roles ?? []).map((role) => ({
+          school_id: school.school_id,
+          school_name: school.school_name,
+          role,
+        })),
+      ),
+    );
+    setEditMembershipRows(flattenedRows);
+    setEditInitialMembershipRows(flattenedRows);
+    setEditSchoolToAdd("");
+    setEditRoleToAdd("teacher");
+  }
+
+  return (
+    <section className="page-card">
+      <SectionTitle>Users</SectionTitle>
+      {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
+      <TableToolbar
+        search={search}
+        onSearch={setSearch}
+        onCreate={() => {
+          setError("");
+          setCreateOpen(true);
+          setCreateMembershipRows([]);
+          setCreateSchoolToAdd("");
+          setCreateRoleToAdd("teacher");
+        }}
+      />
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Email</th>
+            <th>Name</th>
+            <th>Active</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>{row.id}</td>
+              <td>{row.email}</td>
+              <td>
+                {row.profile?.first_name} {row.profile?.last_name}
+              </td>
+              <td>{row.is_active ? "yes" : "no"}</td>
+              <td className="row-actions">
+                <button className="ghost" onClick={() => openEdit(row)} type="button">
+                  Edit
+                </button>
+                <button className="danger" onClick={() => setDeleteUser(row)} type="button">
+                  Delete
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <PaginationControls pagination={pagination} onChange={setOffset} />
+
+      {createOpen && (
+        <Modal
+          title="Create user"
+          onClose={() => setCreateOpen(false)}
+          onSubmit={async () => {
+            try {
+              const createdUser = await request("/api/v1/users", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  email: createForm.email,
+                  password: createForm.password,
+                  is_active: createForm.is_active === "true",
+                  profile: { first_name: createForm.first_name, last_name: createForm.last_name },
+                }),
+              });
+              const newUserId = createdUser?.id;
+              if (newUserId) {
+                for (const row of createMembershipRows) {
+                  await request(`/api/v1/schools/${row.school_id}/users`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ user_id: newUserId, role: row.role }),
+                  });
+                }
+              }
+              setCreateOpen(false);
+              setCreateForm({ email: "", password: "", first_name: "", last_name: "", is_active: "true" });
+              setCreateMembershipRows([]);
+              setCreateSchoolToAdd("");
+              setCreateRoleToAdd("teacher");
+              setMessage("User created");
+              await loadUsers();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Create"
+        >
+          <input placeholder="Email" value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} />
+          <input
+            type="password"
+            placeholder="Password"
+            value={createForm.password}
+            onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+          />
+          <input
+            placeholder="First name"
+            value={createForm.first_name}
+            onChange={(e) => setCreateForm({ ...createForm, first_name: e.target.value })}
+          />
+          <input
+            placeholder="Last name"
+            value={createForm.last_name}
+            onChange={(e) => setCreateForm({ ...createForm, last_name: e.target.value })}
+          />
+          <select value={createForm.is_active} onChange={(e) => setCreateForm({ ...createForm, is_active: e.target.value })}>
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+          <div className="association-box">
+            <p className="muted">School roles</p>
+            <div className="association-row triple">
+              <select value={createSchoolToAdd} onChange={(e) => setCreateSchoolToAdd(e.target.value)}>
+                <option value="">Select school</option>
+                {schoolOptions.map((school) => (
+                  <option key={school.id} value={school.id}>
+                    {school.name}
+                  </option>
+                ))}
+              </select>
+              <select value={createRoleToAdd} onChange={(e) => setCreateRoleToAdd(e.target.value)}>
+                {USER_ROLE_OPTIONS.map((role) => (
+                  <option key={role} value={role}>
+                    {role}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="ghost"
+                onClick={() => {
+                  const schoolId = Number(createSchoolToAdd);
+                  if (!schoolId) {
+                    return;
+                  }
+                  setCreateMembershipRows(
+                    addMembershipRow(createMembershipRows, schoolId, createRoleToAdd, schoolNameById(schoolId)),
+                  );
+                }}
+                type="button"
+              >
+                Add
+              </button>
+            </div>
+            <table className="modal-association-table">
+              <thead>
+                <tr>
+                  <th>School</th>
+                  <th>Role</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {createMembershipRows.map((row) => (
+                  <tr key={membershipKey(row)}>
+                    <td>{row.school_name}</td>
+                    <td>{row.role}</td>
+                    <td className="row-actions">
+                      <button
+                        className="danger"
+                        onClick={() => setCreateMembershipRows(removeMembershipRow(createMembershipRows, row))}
+                        type="button"
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Modal>
+      )}
+
+      {editUser && (
+        <Modal
+          title={`Edit user #${editUser.id}`}
+          onClose={() => setEditUser(null)}
+          onSubmit={async () => {
+            try {
+              const initialKeys = new Set(editInitialMembershipRows.map(membershipKey));
+              const currentKeys = new Set(editMembershipRows.map(membershipKey));
+              const rowsToAdd = editMembershipRows.filter((row) => !initialKeys.has(membershipKey(row)));
+              const rowsToRemove = editInitialMembershipRows.filter((row) => !currentKeys.has(membershipKey(row)));
+              await request(`/api/v1/users/${editUser.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  email: editForm.email || undefined,
+                  password: editForm.password || undefined,
+                  is_active: editForm.is_active === "true",
+                  profile: { first_name: editForm.first_name || undefined, last_name: editForm.last_name || undefined },
+                  associations: {
+                    add: {
+                      school_roles: rowsToAdd.map((row) => ({ school_id: row.school_id, role: row.role })),
+                    },
+                    remove: {
+                      school_roles: rowsToRemove.map((row) => ({ school_id: row.school_id, role: row.role })),
+                    },
+                  },
+                }),
+              });
+              setEditUser(null);
+              setEditMembershipRows([]);
+              setEditInitialMembershipRows([]);
+              setEditSchoolToAdd("");
+              setEditRoleToAdd("teacher");
+              setMessage("User updated");
+              await loadUsers();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Update"
+        >
+          <input placeholder="Email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+          <input
+            type="password"
+            placeholder="Password (optional)"
+            value={editForm.password}
+            onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+          />
+          <input
+            placeholder="First name"
+            value={editForm.first_name}
+            onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
+          />
+          <input
+            placeholder="Last name"
+            value={editForm.last_name}
+            onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
+          />
+          <select value={editForm.is_active} onChange={(e) => setEditForm({ ...editForm, is_active: e.target.value })}>
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+          <div className="association-box">
+            <p className="muted">School roles</p>
+            <div className="association-row triple">
+              <select value={editSchoolToAdd} onChange={(e) => setEditSchoolToAdd(e.target.value)}>
+                <option value="">Select school</option>
+                {schoolOptions.map((school) => (
+                  <option key={school.id} value={school.id}>
+                    {school.name}
+                  </option>
+                ))}
+              </select>
+              <select value={editRoleToAdd} onChange={(e) => setEditRoleToAdd(e.target.value)}>
+                {USER_ROLE_OPTIONS.map((role) => (
+                  <option key={role} value={role}>
+                    {role}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="ghost"
+                onClick={() => {
+                  const schoolId = Number(editSchoolToAdd);
+                  if (!schoolId) {
+                    return;
+                  }
+                  setEditMembershipRows(addMembershipRow(editMembershipRows, schoolId, editRoleToAdd, schoolNameById(schoolId)));
+                }}
+                type="button"
+              >
+                Add
+              </button>
+            </div>
+            <table className="modal-association-table">
+              <thead>
+                <tr>
+                  <th>School</th>
+                  <th>Role</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {editMembershipRows.map((row) => (
+                  <tr key={membershipKey(row)}>
+                    <td>{row.school_name}</td>
+                    <td>{row.role}</td>
+                    <td className="row-actions">
+                      <button
+                        className="danger"
+                        onClick={() => setEditMembershipRows(removeMembershipRow(editMembershipRows, row))}
+                        type="button"
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Modal>
+      )}
+
+      {deleteUser && (
+        <Modal
+          danger
+          title={`Delete user #${deleteUser.id}?`}
+          onClose={() => setDeleteUser(null)}
+          onSubmit={async () => {
+            try {
+              await request(`/api/v1/users/${deleteUser.id}`, { method: "DELETE" });
+              setDeleteUser(null);
+              setMessage("User deleted");
+              await loadUsers();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Delete"
+        >
+          <p>This action cannot be undone.</p>
+        </Modal>
+      )}
+    </section>
+  );
+}
+
+function StudentsConfigPage({ request, selectedSchoolId }) {
+  const [rows, setRows] = useState([]);
+  const [pagination, setPagination] = useState(null);
+  const [search, setSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editStudent, setEditStudent] = useState(null);
+  const [deleteStudent, setDeleteStudent] = useState(null);
+  const [createForm, setCreateForm] = useState({ first_name: "", last_name: "", external_id: "" });
+  const [editForm, setEditForm] = useState({ first_name: "", last_name: "", external_id: "" });
+  const [userOptions, setUserOptions] = useState([]);
+  const [schoolOptions, setSchoolOptions] = useState([]);
+  const [createSelectedUserIds, setCreateSelectedUserIds] = useState([]);
+  const [createSelectedSchoolIds, setCreateSelectedSchoolIds] = useState([]);
+  const [createUserToAdd, setCreateUserToAdd] = useState("");
+  const [createSchoolToAdd, setCreateSchoolToAdd] = useState("");
+  const [editSelectedUserIds, setEditSelectedUserIds] = useState([]);
+  const [editSelectedSchoolIds, setEditSelectedSchoolIds] = useState([]);
+  const [editInitialUserIds, setEditInitialUserIds] = useState([]);
+  const [editInitialSchoolIds, setEditInitialSchoolIds] = useState([]);
+  const [editUserToAdd, setEditUserToAdd] = useState("");
+  const [editSchoolToAdd, setEditSchoolToAdd] = useState("");
+  const [editUserRefs, setEditUserRefs] = useState({});
+  const [editSchoolRefs, setEditSchoolRefs] = useState({});
+
+  async function loadStudents() {
+    if (!selectedSchoolId) {
+      return;
+    }
+    try {
+      const query = new URLSearchParams({ offset: String(offset), limit: String(DEFAULT_LIMIT) });
+      if (search.trim()) {
+        query.set("search", search.trim());
+      }
+      const payload = await request(`/api/v1/students?${query.toString()}`);
+      setRows(payload.items ?? []);
+      setPagination(payload.pagination ?? null);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function loadAssociationOptions() {
+    if (!selectedSchoolId) {
+      return;
+    }
+    try {
+      const [usersPayload, schoolsPayload] = await Promise.all([
+        request("/api/v1/users?offset=0&limit=100"),
+        request("/api/v1/schools?offset=0&limit=100"),
+      ]);
+      setUserOptions(usersPayload.items ?? []);
+      setSchoolOptions(schoolsPayload.items ?? []);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    setOffset(0);
+  }, [search, selectedSchoolId]);
+
+  useEffect(() => {
+    loadAssociationOptions();
+  }, [selectedSchoolId]);
+
+  useEffect(() => {
+    loadStudents();
+  }, [offset, selectedSchoolId, search]);
+
+  useEffect(() => {
+    if (!createOpen) {
+      return;
+    }
+    setCreateSelectedSchoolIds(selectedSchoolId ? [Number(selectedSchoolId)] : []);
+  }, [createOpen, selectedSchoolId]);
+
+  function userLabel(userId) {
+    const user = userOptions.find((item) => item.id === userId);
+    if (!user) {
+      return `User #${userId}`;
+    }
+    const firstName = user.profile?.first_name ?? "";
+    const lastName = user.profile?.last_name ?? "";
+    const fullName = `${firstName} ${lastName}`.trim();
+    return fullName ? `${fullName} (${user.email})` : user.email;
+  }
+
+  function schoolLabel(schoolId) {
+    const school = schoolOptions.find((item) => item.id === schoolId);
+    return school ? school.name : `School #${schoolId}`;
+  }
+
+  function userLabelForEdit(userId) {
+    const ref = editUserRefs[userId];
+    if (ref) {
+      return `${ref.name} (${ref.email})`;
+    }
+    return userLabel(userId);
+  }
+
+  function schoolLabelForEdit(schoolId) {
+    const ref = editSchoolRefs[schoolId];
+    if (ref) {
+      return ref.name;
+    }
+    return schoolLabel(schoolId);
+  }
+
+  function openEdit(student) {
+    setEditStudent(student);
+    setEditForm({
+      first_name: student.first_name ?? "",
+      last_name: student.last_name ?? "",
+      external_id: student.external_id ?? "",
+    });
+    const studentUserIds = student.user_ids ?? [];
+    const studentSchoolIds = student.school_ids ?? [];
+    const userRefs = Object.fromEntries((student.users ?? []).map((user) => [user.id, user]));
+    const schoolRefs = Object.fromEntries((student.schools ?? []).map((school) => [school.id, school]));
+    setEditSelectedUserIds(studentUserIds);
+    setEditSelectedSchoolIds(studentSchoolIds);
+    setEditInitialUserIds(studentUserIds);
+    setEditInitialSchoolIds(studentSchoolIds);
+    setEditUserRefs(userRefs);
+    setEditSchoolRefs(schoolRefs);
+  }
+
+  return (
+    <section className="page-card">
+      <SectionTitle>Students</SectionTitle>
+      {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
+      <TableToolbar
+        search={search}
+        onSearch={setSearch}
+        onCreate={() => {
+          setError("");
+          setCreateOpen(true);
+          setCreateSelectedUserIds([]);
+          setCreateSelectedSchoolIds(selectedSchoolId ? [Number(selectedSchoolId)] : []);
+          setCreateUserToAdd("");
+          setCreateSchoolToAdd("");
+        }}
+      />
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>First name</th>
+            <th>Last name</th>
+            <th>External ID</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>{row.id}</td>
+              <td>{row.first_name}</td>
+              <td>{row.last_name}</td>
+              <td>{row.external_id ?? "-"}</td>
+              <td className="row-actions">
+                <button className="ghost" onClick={() => openEdit(row)} type="button">
+                  Edit
+                </button>
+                <button className="danger" onClick={() => setDeleteStudent(row)} type="button">
+                  Delete
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <PaginationControls pagination={pagination} onChange={setOffset} />
+
+      {createOpen && (
+        <Modal
+          title="Create student"
+          onClose={() => setCreateOpen(false)}
+          onSubmit={async () => {
+            try {
+              const createdStudent = await request("/api/v1/students", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  first_name: createForm.first_name,
+                  last_name: createForm.last_name,
+                  external_id: createForm.external_id || null,
+                }),
+              });
+              for (const userId of createSelectedUserIds) {
+                await request(`/api/v1/students/${createdStudent.id}/users`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ user_id: userId }),
+                });
+              }
+              const currentSchoolId = Number(selectedSchoolId);
+              for (const schoolId of createSelectedSchoolIds) {
+                if (schoolId === currentSchoolId) {
+                  continue;
+                }
+                await request(`/api/v1/students/${createdStudent.id}/schools`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ school_id: schoolId }),
+                });
+              }
+              if (selectedSchoolId && !createSelectedSchoolIds.includes(Number(selectedSchoolId))) {
+                await request(`/api/v1/students/${createdStudent.id}/schools/${Number(selectedSchoolId)}`, {
+                  method: "DELETE",
+                });
+              }
+              setCreateOpen(false);
+              setCreateForm({ first_name: "", last_name: "", external_id: "" });
+              setCreateSelectedUserIds([]);
+              setCreateSelectedSchoolIds([]);
+              setCreateUserToAdd("");
+              setCreateSchoolToAdd("");
+              setMessage("Student created");
+              await loadStudents();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Create"
+        >
+          <input
+            placeholder="First name"
+            value={createForm.first_name}
+            onChange={(e) => setCreateForm({ ...createForm, first_name: e.target.value })}
+          />
+          <input
+            placeholder="Last name"
+            value={createForm.last_name}
+            onChange={(e) => setCreateForm({ ...createForm, last_name: e.target.value })}
+          />
+          <input
+            placeholder="External id"
+            value={createForm.external_id}
+            onChange={(e) => setCreateForm({ ...createForm, external_id: e.target.value })}
+          />
+          <div className="association-box">
+            <p className="muted">Associated users</p>
+            <div className="association-row">
+              <select value={createUserToAdd} onChange={(e) => setCreateUserToAdd(e.target.value)}>
+                <option value="">Select user</option>
+                {userOptions
+                  .filter((user) => !createSelectedUserIds.includes(user.id))
+                  .map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {userLabel(user.id)}
+                    </option>
+                  ))}
+              </select>
+              <button
+                className="ghost"
+                type="button"
+                onClick={() => {
+                  const id = Number(createUserToAdd);
+                  if (!id || createSelectedUserIds.includes(id)) {
+                    return;
+                  }
+                  setCreateSelectedUserIds([...createSelectedUserIds, id]);
+                  setCreateUserToAdd("");
+                }}
+              >
+                Add
+              </button>
+            </div>
+            <div className="chips">
+              {createSelectedUserIds.map((userId) => (
+                <span className="chip" key={userId}>
+                  {userLabel(userId)}
+                  <button
+                    className="chip-remove"
+                    onClick={() => setCreateSelectedUserIds(createSelectedUserIds.filter((id) => id !== userId))}
+                    type="button"
+                  >
+                    x
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="association-box">
+            <p className="muted">Associated schools</p>
+            <div className="association-row">
+              <select value={createSchoolToAdd} onChange={(e) => setCreateSchoolToAdd(e.target.value)}>
+                <option value="">Select school</option>
+                {schoolOptions
+                  .filter((school) => !createSelectedSchoolIds.includes(school.id))
+                  .map((school) => (
+                    <option key={school.id} value={school.id}>
+                      {school.name}
+                    </option>
+                  ))}
+              </select>
+              <button
+                className="ghost"
+                type="button"
+                onClick={() => {
+                  const id = Number(createSchoolToAdd);
+                  if (!id || createSelectedSchoolIds.includes(id)) {
+                    return;
+                  }
+                  setCreateSelectedSchoolIds([...createSelectedSchoolIds, id]);
+                  setCreateSchoolToAdd("");
+                }}
+              >
+                Add
+              </button>
+            </div>
+            <div className="chips">
+              {createSelectedSchoolIds.map((schoolId) => (
+                <span className="chip" key={schoolId}>
+                  {schoolLabel(schoolId)}
+                  <button
+                    className="chip-remove"
+                    onClick={() => setCreateSelectedSchoolIds(createSelectedSchoolIds.filter((id) => id !== schoolId))}
+                    type="button"
+                  >
+                    x
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {editStudent && (
+        <Modal
+          title={`Edit student #${editStudent.id}`}
+          onClose={() => setEditStudent(null)}
+          onSubmit={async () => {
+            try {
+              const usersToAdd = editSelectedUserIds.filter((id) => !editInitialUserIds.includes(id));
+              const usersToRemove = editInitialUserIds.filter((id) => !editSelectedUserIds.includes(id));
+              const schoolsToAdd = editSelectedSchoolIds.filter((id) => !editInitialSchoolIds.includes(id));
+              const schoolsToRemove = editInitialSchoolIds.filter((id) => !editSelectedSchoolIds.includes(id));
+              await request(`/api/v1/students/${editStudent.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  first_name: editForm.first_name || undefined,
+                  last_name: editForm.last_name || undefined,
+                  external_id: editForm.external_id || undefined,
+                  associations: {
+                    add: { user_ids: usersToAdd, school_ids: schoolsToAdd },
+                    remove: { user_ids: usersToRemove, school_ids: schoolsToRemove },
+                  },
+                }),
+              });
+              setEditStudent(null);
+              setEditSelectedUserIds([]);
+              setEditSelectedSchoolIds([]);
+              setEditInitialUserIds([]);
+              setEditInitialSchoolIds([]);
+              setEditUserToAdd("");
+              setEditSchoolToAdd("");
+              setEditUserRefs({});
+              setEditSchoolRefs({});
+              setMessage("Student updated");
+              await loadStudents();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Update"
+        >
+          <input
+            placeholder="First name"
+            value={editForm.first_name}
+            onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
+          />
+          <input
+            placeholder="Last name"
+            value={editForm.last_name}
+            onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
+          />
+          <input
+            placeholder="External id"
+            value={editForm.external_id}
+            onChange={(e) => setEditForm({ ...editForm, external_id: e.target.value })}
+          />
+          <div className="association-box">
+            <p className="muted">Associated users</p>
+            <div className="association-row">
+              <select value={editUserToAdd} onChange={(e) => setEditUserToAdd(e.target.value)}>
+                <option value="">Select user</option>
+                {userOptions
+                  .filter((user) => !editSelectedUserIds.includes(user.id))
+                  .map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {userLabel(user.id)}
+                    </option>
+                  ))}
+              </select>
+              <button
+                className="ghost"
+                type="button"
+                onClick={() => {
+                  const id = Number(editUserToAdd);
+                  if (!id || editSelectedUserIds.includes(id)) {
+                    return;
+                  }
+                  setEditSelectedUserIds([...editSelectedUserIds, id]);
+                  setEditUserToAdd("");
+                }}
+              >
+                Add
+              </button>
+            </div>
+            <div className="chips">
+              {editSelectedUserIds.map((userId) => (
+                <span className="chip" key={userId}>
+                  {userLabelForEdit(userId)}
+                  <button
+                    className="chip-remove"
+                    onClick={() => setEditSelectedUserIds(editSelectedUserIds.filter((id) => id !== userId))}
+                    type="button"
+                  >
+                    x
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="association-box">
+            <p className="muted">Associated schools</p>
+            <div className="association-row">
+              <select value={editSchoolToAdd} onChange={(e) => setEditSchoolToAdd(e.target.value)}>
+                <option value="">Select school</option>
+                {schoolOptions
+                  .filter((school) => !editSelectedSchoolIds.includes(school.id))
+                  .map((school) => (
+                    <option key={school.id} value={school.id}>
+                      {school.name}
+                    </option>
+                  ))}
+              </select>
+              <button
+                className="ghost"
+                type="button"
+                onClick={() => {
+                  const id = Number(editSchoolToAdd);
+                  if (!id || editSelectedSchoolIds.includes(id)) {
+                    return;
+                  }
+                  setEditSelectedSchoolIds([...editSelectedSchoolIds, id]);
+                  setEditSchoolToAdd("");
+                }}
+              >
+                Add
+              </button>
+            </div>
+            <div className="chips">
+              {editSelectedSchoolIds.map((schoolId) => (
+                <span className="chip" key={schoolId}>
+                  {schoolLabelForEdit(schoolId)}
+                  <button
+                    className="chip-remove"
+                    onClick={() => setEditSelectedSchoolIds(editSelectedSchoolIds.filter((id) => id !== schoolId))}
+                    type="button"
+                  >
+                    x
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {deleteStudent && (
+        <Modal
+          danger
+          title={`Delete student #${deleteStudent.id}?`}
+          onClose={() => setDeleteStudent(null)}
+          onSubmit={async () => {
+            try {
+              await request(`/api/v1/students/${deleteStudent.id}`, { method: "DELETE" });
+              setDeleteStudent(null);
+              setMessage("Student deleted");
+              await loadStudents();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Delete"
+        >
+          <p>This action cannot be undone.</p>
+        </Modal>
+      )}
+    </section>
+  );
+}
+
+function SchoolsConfigPage({ request, selectedSchoolId }) {
+  const [rows, setRows] = useState([]);
+  const [pagination, setPagination] = useState(null);
+  const [search, setSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editSchool, setEditSchool] = useState(null);
+  const [deleteSchool, setDeleteSchool] = useState(null);
+  const [createForm, setCreateForm] = useState({ name: "", slug: "" });
+  const [editForm, setEditForm] = useState({ name: "", slug: "", is_active: "true" });
+
+  async function loadSchools() {
+    try {
+      const query = new URLSearchParams({ offset: String(offset), limit: String(DEFAULT_LIMIT) });
+      if (search.trim()) {
+        query.set("search", search.trim());
+      }
+      const payload = await request(`/api/v1/schools?${query.toString()}`);
+      setRows(payload.items ?? []);
+      setPagination(payload.pagination ?? null);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    setOffset(0);
+  }, [search, selectedSchoolId]);
+
+  useEffect(() => {
+    loadSchools();
+  }, [offset, selectedSchoolId, search]);
+
+  function openEdit(school) {
+    setEditSchool(school);
+    setEditForm({ name: school.name ?? "", slug: school.slug ?? "", is_active: String(school.is_active ?? true) });
+  }
+
+  return (
+    <section className="page-card">
+      <SectionTitle>Schools</SectionTitle>
+      {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
+      <TableToolbar
+        search={search}
+        onSearch={setSearch}
+        onCreate={() => {
+          setError("");
+          setCreateOpen(true);
+        }}
+      />
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Slug</th>
+            <th>Active</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>{row.id}</td>
+              <td>{row.name}</td>
+              <td>{row.slug}</td>
+              <td>{row.is_active ? "yes" : "no"}</td>
+              <td className="row-actions">
+                <button className="ghost" onClick={() => openEdit(row)} type="button">
+                  Edit
+                </button>
+                <button className="danger" onClick={() => setDeleteSchool(row)} type="button">
+                  Delete
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <PaginationControls pagination={pagination} onChange={setOffset} />
+
+      {createOpen && (
+        <Modal
+          title="Create school"
+          onClose={() => setCreateOpen(false)}
+          onSubmit={async () => {
+            try {
+              await request("/api/v1/schools", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: createForm.name, slug: createForm.slug }),
+              });
+              setCreateOpen(false);
+              setCreateForm({ name: "", slug: "" });
+              setMessage("School created");
+              await loadSchools();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Create"
+        >
+          <input placeholder="Name" value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} />
+          <input placeholder="Slug" value={createForm.slug} onChange={(e) => setCreateForm({ ...createForm, slug: e.target.value })} />
+        </Modal>
+      )}
+
+      {editSchool && (
+        <Modal
+          title={`Edit school #${editSchool.id}`}
+          onClose={() => setEditSchool(null)}
+          onSubmit={async () => {
+            try {
+              await request(
+                `/api/v1/schools/${editSchool.id}`,
+                {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    name: editForm.name || undefined,
+                    slug: editForm.slug || undefined,
+                    is_active: editForm.is_active === "true",
+                  }),
+                },
+                editSchool.id,
+              );
+              setEditSchool(null);
+              setMessage("School updated");
+              await loadSchools();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Update"
+        >
+          <input placeholder="Name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+          <input placeholder="Slug" value={editForm.slug} onChange={(e) => setEditForm({ ...editForm, slug: e.target.value })} />
+          <select value={editForm.is_active} onChange={(e) => setEditForm({ ...editForm, is_active: e.target.value })}>
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+        </Modal>
+      )}
+
+      {deleteSchool && (
+        <Modal
+          danger
+          title={`Delete school #${deleteSchool.id}?`}
+          onClose={() => setDeleteSchool(null)}
+          onSubmit={async () => {
+            try {
+              await request(`/api/v1/schools/${deleteSchool.id}`, { method: "DELETE" }, deleteSchool.id);
+              setDeleteSchool(null);
+              setMessage("School deleted");
+              await loadSchools();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Delete"
+        >
+          <p>This action cannot be undone.</p>
+        </Modal>
+      )}
+    </section>
+  );
+}
+
+function Sidebar({ isSchoolAdmin, myStudents, selectedSchoolId }) {
+  return (
+    <aside className="sidebar">
+      <h2 className="sidebar-title">Mattilda</h2>
+      <nav className="sidebar-nav">
+        <NavLink to="/dashboard">Dashboard</NavLink>
+
+        {isSchoolAdmin && (
+          <div className="sidebar-group">
+            <p>Configuration</p>
+            <NavLink to="/config/users">Users</NavLink>
+            <NavLink to="/config/students">Students</NavLink>
+            <NavLink to="/config/schools">Schools</NavLink>
+          </div>
+        )}
+
+        <div className="sidebar-group">
+          <p>Students</p>
+          {myStudents.length === 0 && <span className="muted">No students</span>}
+          {myStudents.map((student) => (
+            <NavLink key={student.id} to={`/students/${student.id}`}>
+              {student.first_name} {student.last_name}
+            </NavLink>
+          ))}
+        </div>
+
+        {!selectedSchoolId && <p className="muted">Select a school to continue.</p>}
+      </nav>
+    </aside>
+  );
+}
+
+function AppLayout({
+  me,
+  selectedSchoolId,
+  setSelectedSchoolId,
+  selectedSchool,
+  activeSchool,
+  onLogout,
+  isSchoolAdmin,
+  myStudents,
+  request,
+}) {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    if (location.pathname === "/") {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [location.pathname, navigate]);
+
+  return (
+    <div className="app-shell">
+      <Sidebar isSchoolAdmin={isSchoolAdmin} myStudents={myStudents} selectedSchoolId={selectedSchoolId} />
+      <main className="content">
+        <header className="topbar">
+          <div>
+            <strong>{activeSchool?.name ?? "No school selected"}</strong>
+          </div>
+          <div className="topbar-actions">
+            <select
+              value={selectedSchoolId}
+              onChange={(event) => {
+                const next = event.target.value;
+                setSelectedSchoolId(next);
+                if (next) {
+                  localStorage.setItem(SCHOOL_KEY, next);
+                } else {
+                  localStorage.removeItem(SCHOOL_KEY);
+                }
+                navigate("/dashboard");
+              }}
+            >
+              {(me?.schools ?? []).map((school) => (
+                <option key={school.school_id} value={school.school_id}>
+                  {school.school_name}
+                </option>
+              ))}
+            </select>
+            <NavLink className="avatar-link" to="/profile">
+              {me?.profile?.first_name?.slice(0, 1) ?? "U"}
+            </NavLink>
+            <button className="ghost" onClick={onLogout} type="button">
+              Logout
+            </button>
+          </div>
+        </header>
+
+        <Routes>
+          <Route path="/dashboard" element={<DashboardPage activeSchool={activeSchool} />} />
+          <Route path="/profile" element={<ProfilePage me={me} selectedSchool={selectedSchool} />} />
+          <Route path="/students/:studentId" element={<StudentDetailPage selectedSchoolId={selectedSchoolId} request={request} />} />
+          <Route
+            path="/config/users"
+            element={isSchoolAdmin ? <UsersConfigPage request={request} selectedSchoolId={selectedSchoolId} /> : <Navigate replace to="/dashboard" />}
+          />
+          <Route
+            path="/config/students"
+            element={
+              isSchoolAdmin ? <StudentsConfigPage request={request} selectedSchoolId={selectedSchoolId} /> : <Navigate replace to="/dashboard" />
+            }
+          />
+          <Route
+            path="/config/schools"
+            element={isSchoolAdmin ? <SchoolsConfigPage request={request} selectedSchoolId={selectedSchoolId} /> : <Navigate replace to="/dashboard" />}
+          />
+          <Route path="*" element={<Navigate replace to="/dashboard" />} />
+        </Routes>
+      </main>
+    </div>
+  );
+}
+
+export default function App() {
+  const navigate = useNavigate();
+  const health = usePublicHealth();
+  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) ?? "");
+  const [selectedSchoolId, setSelectedSchoolId] = useState(() => localStorage.getItem(SCHOOL_KEY) ?? "");
+  const [me, setMe] = useState(null);
+  const [activeSchool, setActiveSchool] = useState(null);
+  const [loadingAuth, setLoadingAuth] = useState(false);
+  const [error, setError] = useState("");
+  const [username, setUsername] = useState("admin@example.com");
+  const [password, setPassword] = useState("admin123");
+
   const selectedSchool = useMemo(() => {
     if (!me || !selectedSchoolId) {
       return null;
     }
     return me.schools.find((school) => String(school.school_id) === String(selectedSchoolId)) ?? null;
   }, [me, selectedSchoolId]);
+
   const isSchoolAdmin = useMemo(() => {
     if (!selectedSchool) {
       return false;
     }
     return selectedSchool.roles.includes("admin");
   }, [selectedSchool]);
-  const studentsForSelectedSchool = useMemo(() => {
+
+  const myStudents = useMemo(() => {
     if (!me || !selectedSchoolId) {
       return [];
     }
     return (me.students ?? []).filter((student) => student.school_ids.includes(Number(selectedSchoolId)));
   }, [me, selectedSchoolId]);
+
+  async function authenticatedRequest(path, options = {}, schoolIdOverride = null) {
+    if (!token) {
+      throw new Error("Missing auth token");
+    }
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      ...(options.headers ?? {}),
+    };
+    const schoolHeaderId = schoolIdOverride ?? selectedSchoolId;
+    if (schoolHeaderId) {
+      headers["X-School-Id"] = String(schoolHeaderId);
+    }
+    const response = await fetch(`${API_URL}${path}`, { ...options, headers });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.detail ?? `Request failed with ${response.status}`);
+    }
+    if (response.status === 204) {
+      return null;
+    }
+    return response.json();
+  }
 
   useEffect(() => {
     async function loadMe() {
@@ -77,24 +1509,14 @@ export default function App() {
       }
       setLoadingAuth(true);
       try {
-        const response = await fetch(`${API_URL}/api/v1/users/me`, {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        });
-        if (!response.ok) {
-          throw new Error("Session expired or invalid token");
-        }
-        const mePayload = await response.json();
+        const mePayload = await authenticatedRequest("/api/v1/users/me");
         setMe(mePayload);
-        if (mePayload.schools.length === 0) {
+        if ((mePayload.schools ?? []).length === 0) {
           setSelectedSchoolId("");
           localStorage.removeItem(SCHOOL_KEY);
           return;
         }
-        const selectedExists = mePayload.schools.some(
-          (school) => String(school.school_id) === String(selectedSchoolId)
-        );
+        const selectedExists = mePayload.schools.some((school) => String(school.school_id) === String(selectedSchoolId));
         if (!selectedExists) {
           const defaultSchoolId = String(mePayload.schools[0].school_id);
           setSelectedSchoolId(defaultSchoolId);
@@ -110,7 +1532,6 @@ export default function App() {
         setLoadingAuth(false);
       }
     }
-
     loadMe();
   }, [token]);
 
@@ -121,82 +1542,25 @@ export default function App() {
         return;
       }
       try {
-        const response = await fetch(`${API_URL}/api/v1/schools/${selectedSchoolId}`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "X-School-Id": String(selectedSchoolId)
-          }
-        });
-        if (!response.ok) {
-          throw new Error("Unable to load selected school");
-        }
-        setActiveSchool(await response.json());
-      } catch (err) {
-        setError(err.message);
+        const payload = await authenticatedRequest(`/api/v1/schools/${selectedSchoolId}`);
+        setActiveSchool(payload);
+      } catch (_err) {
         setActiveSchool(null);
       }
     }
-
     loadActiveSchool();
-  }, [token, selectedSchoolId]);
-
-  async function authenticatedRequest(path, options = {}) {
-    if (!token) {
-      throw new Error("Missing auth token");
-    }
-    const headers = {
-      Authorization: `Bearer ${token}`,
-      ...(options.headers ?? {})
-    };
-    if (selectedSchoolId) {
-      headers["X-School-Id"] = String(selectedSchoolId);
-    }
-    const response = await fetch(`${API_URL}${path}`, { ...options, headers });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || `Request failed with ${response.status}`);
-    }
-    if (response.status === 204) {
-      return null;
-    }
-    return response.json();
-  }
-
-  async function refreshAdminData() {
-    if (!isSchoolAdmin || !selectedSchoolId) {
-      setStudents([]);
-      setUsers([]);
-      return;
-    }
-    try {
-      const [studentsPayload, usersPayload] = await Promise.all([
-        authenticatedRequest("/api/v1/students"),
-        authenticatedRequest("/api/v1/users")
-      ]);
-      setStudents(studentsPayload);
-      setUsers(usersPayload);
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  useEffect(() => {
-    refreshAdminData();
-  }, [isSchoolAdmin, selectedSchoolId, token]);
+  }, [token, selectedSchoolId, me]);
 
   async function onLogin(event) {
     event.preventDefault();
     setError("");
     setLoadingAuth(true);
     try {
-      const body = new URLSearchParams({
-        username,
-        password
-      });
+      const body = new URLSearchParams({ username, password });
       const response = await fetch(`${API_URL}/api/v1/auth/token`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body
+        body,
       });
       if (!response.ok) {
         throw new Error("Invalid credentials");
@@ -204,6 +1568,7 @@ export default function App() {
       const data = await response.json();
       localStorage.setItem(TOKEN_KEY, data.access_token);
       setToken(data.access_token);
+      navigate("/dashboard");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -218,608 +1583,43 @@ export default function App() {
     setSelectedSchoolId("");
     setMe(null);
     setActiveSchool(null);
+    navigate("/");
   }
 
-  function onSchoolChange(event) {
-    const nextSchoolId = event.target.value;
-    setSelectedSchoolId(nextSchoolId);
-    if (nextSchoolId) {
-      localStorage.setItem(SCHOOL_KEY, nextSchoolId);
-      return;
-    }
-    localStorage.removeItem(SCHOOL_KEY);
+  if (!token) {
+    return (
+      <LoginPage
+        username={username}
+        setUsername={setUsername}
+        password={password}
+        setPassword={setPassword}
+        loading={loadingAuth}
+        onSubmit={onLogin}
+        error={error}
+        health={health}
+      />
+    );
   }
 
-  async function handleCreateUser(event) {
-    event.preventDefault();
-    setAdminMessage("");
-    try {
-      const createdUser = await authenticatedRequest("/api/v1/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: newUser.email,
-          password: newUser.password,
-          is_active: true,
-          profile: {
-            first_name: newUser.first_name,
-            last_name: newUser.last_name
-          }
-        })
-      });
-      await authenticatedRequest(`/api/v1/schools/${selectedSchoolId}/users`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: createdUser.id,
-          role: newUser.role
-        })
-      });
-      setNewUser({ email: "", password: "", first_name: "", last_name: "", role: "admin" });
-      setAdminMessage("User created and associated to school");
-      await refreshAdminData();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleCreateSchool(event) {
-    event.preventDefault();
-    setAdminMessage("");
-    try {
-      await authenticatedRequest("/api/v1/schools", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newSchool)
-      });
-      setNewSchool({ name: "", slug: "" });
-      setAdminMessage("School created");
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleCreateStudent(event) {
-    event.preventDefault();
-    setAdminMessage("");
-    try {
-      const student = await authenticatedRequest("/api/v1/students", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          first_name: newStudent.first_name,
-          last_name: newStudent.last_name,
-          external_id: newStudent.external_id || null
-        })
-      });
-      await authenticatedRequest(`/api/v1/students/${student.id}/schools`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ school_id: Number(selectedSchoolId) })
-      });
-      if (newStudent.user_id) {
-        await authenticatedRequest(`/api/v1/students/${student.id}/users`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: Number(newStudent.user_id) })
-        });
-      }
-      setNewStudent({ first_name: "", last_name: "", external_id: "", user_id: "" });
-      setAdminMessage("Student created and associated");
-      await refreshAdminData();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleLinkUserSchool(event) {
-    event.preventDefault();
-    setAdminMessage("");
-    try {
-      await authenticatedRequest(`/api/v1/schools/${selectedSchoolId}/users`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: Number(linkUserSchool.user_id), role: linkUserSchool.role })
-      });
-      setAdminMessage("User linked to school");
-      await refreshAdminData();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleLinkUserStudent(event) {
-    event.preventDefault();
-    setAdminMessage("");
-    try {
-      await authenticatedRequest(`/api/v1/students/${Number(linkUserStudent.student_id)}/users`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: Number(linkUserStudent.user_id) })
-      });
-      setAdminMessage("User linked to student");
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleLinkStudentSchool(event) {
-    event.preventDefault();
-    setAdminMessage("");
-    try {
-      await authenticatedRequest(`/api/v1/students/${Number(linkStudentSchool.student_id)}/schools`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ school_id: Number(selectedSchoolId) })
-      });
-      setAdminMessage("Student linked to school");
-      await refreshAdminData();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleUpdateUser(event) {
-    event.preventDefault();
-    try {
-      await authenticatedRequest(`/api/v1/users/${Number(updateUser.user_id)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: updateUser.email || undefined,
-          password: updateUser.password || undefined,
-          is_active: updateUser.is_active === "true",
-          profile: {
-            first_name: updateUser.first_name || undefined,
-            last_name: updateUser.last_name || undefined
-          }
-        })
-      });
-      setAdminMessage("User updated");
-      await refreshAdminData();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleUpdateSchool(event) {
-    event.preventDefault();
-    try {
-      await authenticatedRequest(`/api/v1/schools/${Number(updateSchool.school_id)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", "X-School-Id": String(updateSchool.school_id) },
-        body: JSON.stringify({
-          name: updateSchool.name || undefined,
-          slug: updateSchool.slug || undefined,
-          is_active: updateSchool.is_active === "true"
-        })
-      });
-      setAdminMessage("School updated");
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleUpdateStudent(event) {
-    event.preventDefault();
-    try {
-      await authenticatedRequest(`/api/v1/students/${Number(updateStudent.student_id)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          first_name: updateStudent.first_name || undefined,
-          last_name: updateStudent.last_name || undefined,
-          external_id: updateStudent.external_id || undefined
-        })
-      });
-      setAdminMessage("Student updated");
-      await refreshAdminData();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleDeleteUser(event) {
-    event.preventDefault();
-    try {
-      await authenticatedRequest(`/api/v1/users/${Number(deleteIds.user_id)}`, { method: "DELETE" });
-      setAdminMessage("User deleted");
-      await refreshAdminData();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleDeleteSchool(event) {
-    event.preventDefault();
-    try {
-      await authenticatedRequest(`/api/v1/schools/${Number(deleteIds.school_id)}`, {
-        method: "DELETE",
-        headers: { "X-School-Id": String(deleteIds.school_id) }
-      });
-      setAdminMessage("School deleted");
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleDeleteStudent(event) {
-    event.preventDefault();
-    try {
-      await authenticatedRequest(`/api/v1/students/${Number(deleteIds.student_id)}`, { method: "DELETE" });
-      setAdminMessage("Student deleted");
-      await refreshAdminData();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleDeassociateUserSchool(event) {
-    event.preventDefault();
-    try {
-      await authenticatedRequest(`/api/v1/schools/${selectedSchoolId}/users/${Number(linkUserSchool.user_id)}`, { method: "DELETE" });
-      setAdminMessage("User deassociated from school");
-      await refreshAdminData();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleDeassociateUserStudent(event) {
-    event.preventDefault();
-    try {
-      await authenticatedRequest(`/api/v1/students/${Number(linkUserStudent.student_id)}/users/${Number(linkUserStudent.user_id)}`, { method: "DELETE" });
-      setAdminMessage("User deassociated from student");
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  async function handleDeassociateStudentSchool(event) {
-    event.preventDefault();
-    try {
-      await authenticatedRequest(`/api/v1/students/${Number(linkStudentSchool.student_id)}/schools/${Number(selectedSchoolId)}`, { method: "DELETE" });
-      setAdminMessage("Student deassociated from school");
-      await refreshAdminData();
-    } catch (err) {
-      setError(err.message);
-    }
+  if (loadingAuth || !me) {
+    return (
+      <main className="loading-page">
+        <p>Loading session...</p>
+      </main>
+    );
   }
 
   return (
-    <main className="container">
-      <h1>Mattilda Take-Home</h1>
-      <p>Frontend connected to FastAPI backend with JWT auth.</p>
-      {loadingPublic && <p>Loading backend status...</p>}
-      {error && <p className="error">Error: {error}</p>}
-      {payload && (
-        <div className="card">
-          <p>
-            <strong>Message:</strong> {payload.message}
-          </p>
-          <p>
-            <strong>DB:</strong> {String(payload.db_connected)}
-          </p>
-          <p>
-            <strong>Redis:</strong> {String(payload.redis_connected)}
-          </p>
-        </div>
-      )}
-
-      {!isAuthenticated && (
-        <form className="card form" onSubmit={onLogin}>
-          <h2>Login</h2>
-          <label>
-            Email
-            <input value={username} onChange={(event) => setUsername(event.target.value)} />
-          </label>
-          <label>
-            Password
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-          </label>
-          <button disabled={loadingAuth} type="submit">
-            {loadingAuth ? "Signing in..." : "Sign in"}
-          </button>
-        </form>
-      )}
-
-      {isAuthenticated && (
-        <section className="card">
-          <h2>Home</h2>
-          {loadingAuth && <p>Loading session...</p>}
-          {me && (
-            <>
-              <p>
-                <strong>User:</strong> {me.email}
-              </p>
-              <p>
-                <strong>Name:</strong> {me.profile.first_name} {me.profile.last_name}
-              </p>
-              {me.schools.length > 0 && (
-                <>
-                  <label>
-                    Active School
-                    <select value={selectedSchoolId} onChange={onSchoolChange}>
-                      {me.schools.map((school) => (
-                        <option key={school.school_id} value={school.school_id}>
-                          {school.school_name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {selectedSchool && (
-                    <p>
-                      <strong>Roles in school:</strong> {selectedSchool.roles.join(", ")}
-                    </p>
-                  )}
-                  {activeSchool && (
-                    <p>
-                      <strong>Selected school:</strong> {activeSchool.name}
-                    </p>
-                  )}
-                  <div>
-                    <strong>My students in this school:</strong>
-                    {studentsForSelectedSchool.length === 0 ? (
-                      <p>None assigned.</p>
-                    ) : (
-                      <ul>
-                        {studentsForSelectedSchool.map((student) => (
-                          <li key={student.id}>
-                            {student.first_name} {student.last_name}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </>
-              )}
-            </>
-          )}
-          {isSchoolAdmin && (
-            <section className="card">
-              <h3>Admin Section</h3>
-              {adminMessage && <p>{adminMessage}</p>}
-              <form className="form" onSubmit={handleCreateUser}>
-                <h4>Create User</h4>
-                <input placeholder="email" value={newUser.email} onChange={(event) => setNewUser({ ...newUser, email: event.target.value })} />
-                <input type="password" placeholder="password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} />
-                <input placeholder="first name" value={newUser.first_name} onChange={(event) => setNewUser({ ...newUser, first_name: event.target.value })} />
-                <input placeholder="last name" value={newUser.last_name} onChange={(event) => setNewUser({ ...newUser, last_name: event.target.value })} />
-                <select value={newUser.role} onChange={(event) => setNewUser({ ...newUser, role: event.target.value })}>
-                  <option value="admin">admin</option>
-                  <option value="director">director</option>
-                  <option value="teacher">teacher</option>
-                  <option value="student">student</option>
-                  <option value="parent">parent</option>
-                </select>
-                <button type="submit">Create user</button>
-              </form>
-              <form className="form" onSubmit={handleCreateSchool}>
-                <h4>Create School</h4>
-                <input placeholder="name" value={newSchool.name} onChange={(event) => setNewSchool({ ...newSchool, name: event.target.value })} />
-                <input placeholder="slug" value={newSchool.slug} onChange={(event) => setNewSchool({ ...newSchool, slug: event.target.value })} />
-                <button type="submit">Create school</button>
-              </form>
-              <form className="form" onSubmit={handleCreateStudent}>
-                <h4>Create Student</h4>
-                <input placeholder="first name" value={newStudent.first_name} onChange={(event) => setNewStudent({ ...newStudent, first_name: event.target.value })} />
-                <input placeholder="last name" value={newStudent.last_name} onChange={(event) => setNewStudent({ ...newStudent, last_name: event.target.value })} />
-                <input placeholder="external id" value={newStudent.external_id} onChange={(event) => setNewStudent({ ...newStudent, external_id: event.target.value })} />
-                <select value={newStudent.user_id} onChange={(event) => setNewStudent({ ...newStudent, user_id: event.target.value })}>
-                  <option value="">optional user</option>
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.id} - {user.email}
-                    </option>
-                  ))}
-                </select>
-                <button type="submit">Create student</button>
-              </form>
-              <form className="form" onSubmit={handleLinkUserSchool}>
-                <h4>Associate User with School</h4>
-                <select value={linkUserSchool.user_id} onChange={(event) => setLinkUserSchool({ ...linkUserSchool, user_id: event.target.value })}>
-                  <option value="">select user</option>
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.id} - {user.email}
-                    </option>
-                  ))}
-                </select>
-                <select value={linkUserSchool.role} onChange={(event) => setLinkUserSchool({ ...linkUserSchool, role: event.target.value })}>
-                  <option value="admin">admin</option>
-                  <option value="director">director</option>
-                  <option value="teacher">teacher</option>
-                  <option value="student">student</option>
-                  <option value="parent">parent</option>
-                </select>
-                <button type="submit">Associate</button>
-              </form>
-              <form className="form" onSubmit={handleDeassociateUserSchool}>
-                <h4>Deassociate User from School</h4>
-                <select value={linkUserSchool.user_id} onChange={(event) => setLinkUserSchool({ ...linkUserSchool, user_id: event.target.value })}>
-                  <option value="">select user</option>
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.id} - {user.email}
-                    </option>
-                  ))}
-                </select>
-                <button type="submit">Deassociate</button>
-              </form>
-              <form className="form" onSubmit={handleLinkUserStudent}>
-                <h4>Associate User with Student</h4>
-                <select value={linkUserStudent.user_id} onChange={(event) => setLinkUserStudent({ ...linkUserStudent, user_id: event.target.value })}>
-                  <option value="">select user</option>
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.id} - {user.email}
-                    </option>
-                  ))}
-                </select>
-                <select value={linkUserStudent.student_id} onChange={(event) => setLinkUserStudent({ ...linkUserStudent, student_id: event.target.value })}>
-                  <option value="">select student</option>
-                  {students.map((student) => (
-                    <option key={student.id} value={student.id}>
-                      {student.id} - {student.first_name} {student.last_name}
-                    </option>
-                  ))}
-                </select>
-                <button type="submit">Associate</button>
-              </form>
-              <form className="form" onSubmit={handleDeassociateUserStudent}>
-                <h4>Deassociate User from Student</h4>
-                <select value={linkUserStudent.user_id} onChange={(event) => setLinkUserStudent({ ...linkUserStudent, user_id: event.target.value })}>
-                  <option value="">select user</option>
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.id} - {user.email}
-                    </option>
-                  ))}
-                </select>
-                <select value={linkUserStudent.student_id} onChange={(event) => setLinkUserStudent({ ...linkUserStudent, student_id: event.target.value })}>
-                  <option value="">select student</option>
-                  {students.map((student) => (
-                    <option key={student.id} value={student.id}>
-                      {student.id} - {student.first_name} {student.last_name}
-                    </option>
-                  ))}
-                </select>
-                <button type="submit">Deassociate</button>
-              </form>
-              <form className="form" onSubmit={handleLinkStudentSchool}>
-                <h4>Associate Student with School</h4>
-                <select value={linkStudentSchool.student_id} onChange={(event) => setLinkStudentSchool({ ...linkStudentSchool, student_id: event.target.value })}>
-                  <option value="">select student</option>
-                  {students.map((student) => (
-                    <option key={student.id} value={student.id}>
-                      {student.id} - {student.first_name} {student.last_name}
-                    </option>
-                  ))}
-                </select>
-                <button type="submit">Associate</button>
-              </form>
-              <form className="form" onSubmit={handleDeassociateStudentSchool}>
-                <h4>Deassociate Student from School</h4>
-                <select value={linkStudentSchool.student_id} onChange={(event) => setLinkStudentSchool({ ...linkStudentSchool, student_id: event.target.value })}>
-                  <option value="">select student</option>
-                  {students.map((student) => (
-                    <option key={student.id} value={student.id}>
-                      {student.id} - {student.first_name} {student.last_name}
-                    </option>
-                  ))}
-                </select>
-                <button type="submit">Deassociate</button>
-              </form>
-              <form className="form" onSubmit={handleUpdateUser}>
-                <h4>Edit User</h4>
-                <select value={updateUser.user_id} onChange={(event) => setUpdateUser({ ...updateUser, user_id: event.target.value })}>
-                  <option value="">select user</option>
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.id} - {user.email}
-                    </option>
-                  ))}
-                </select>
-                <input placeholder="email" value={updateUser.email} onChange={(event) => setUpdateUser({ ...updateUser, email: event.target.value })} />
-                <input placeholder="password" value={updateUser.password} onChange={(event) => setUpdateUser({ ...updateUser, password: event.target.value })} />
-                <input placeholder="first name" value={updateUser.first_name} onChange={(event) => setUpdateUser({ ...updateUser, first_name: event.target.value })} />
-                <input placeholder="last name" value={updateUser.last_name} onChange={(event) => setUpdateUser({ ...updateUser, last_name: event.target.value })} />
-                <select value={updateUser.is_active} onChange={(event) => setUpdateUser({ ...updateUser, is_active: event.target.value })}>
-                  <option value="true">active</option>
-                  <option value="false">inactive</option>
-                </select>
-                <button type="submit">Update user</button>
-              </form>
-              <form className="form" onSubmit={handleUpdateSchool}>
-                <h4>Edit School</h4>
-                <select value={updateSchool.school_id} onChange={(event) => setUpdateSchool({ ...updateSchool, school_id: event.target.value })}>
-                  <option value="">select school</option>
-                  {(me?.schools ?? []).map((school) => (
-                    <option key={school.school_id} value={school.school_id}>
-                      {school.school_name}
-                    </option>
-                  ))}
-                </select>
-                <input placeholder="name" value={updateSchool.name} onChange={(event) => setUpdateSchool({ ...updateSchool, name: event.target.value })} />
-                <input placeholder="slug" value={updateSchool.slug} onChange={(event) => setUpdateSchool({ ...updateSchool, slug: event.target.value })} />
-                <select value={updateSchool.is_active} onChange={(event) => setUpdateSchool({ ...updateSchool, is_active: event.target.value })}>
-                  <option value="true">active</option>
-                  <option value="false">inactive</option>
-                </select>
-                <button type="submit">Update school</button>
-              </form>
-              <form className="form" onSubmit={handleUpdateStudent}>
-                <h4>Edit Student</h4>
-                <select value={updateStudent.student_id} onChange={(event) => setUpdateStudent({ ...updateStudent, student_id: event.target.value })}>
-                  <option value="">select student</option>
-                  {students.map((student) => (
-                    <option key={student.id} value={student.id}>
-                      {student.id} - {student.first_name} {student.last_name}
-                    </option>
-                  ))}
-                </select>
-                <input placeholder="first name" value={updateStudent.first_name} onChange={(event) => setUpdateStudent({ ...updateStudent, first_name: event.target.value })} />
-                <input placeholder="last name" value={updateStudent.last_name} onChange={(event) => setUpdateStudent({ ...updateStudent, last_name: event.target.value })} />
-                <input placeholder="external id" value={updateStudent.external_id} onChange={(event) => setUpdateStudent({ ...updateStudent, external_id: event.target.value })} />
-                <button type="submit">Update student</button>
-              </form>
-              <form className="form" onSubmit={handleDeleteUser}>
-                <h4>Delete User</h4>
-                <select value={deleteIds.user_id} onChange={(event) => setDeleteIds({ ...deleteIds, user_id: event.target.value })}>
-                  <option value="">select user</option>
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.id} - {user.email}
-                    </option>
-                  ))}
-                </select>
-                <button type="submit">Delete user</button>
-              </form>
-              <form className="form" onSubmit={handleDeleteSchool}>
-                <h4>Delete School</h4>
-                <select value={deleteIds.school_id} onChange={(event) => setDeleteIds({ ...deleteIds, school_id: event.target.value })}>
-                  <option value="">select school</option>
-                  {(me?.schools ?? []).map((school) => (
-                    <option key={school.school_id} value={school.school_id}>
-                      {school.school_name}
-                    </option>
-                  ))}
-                </select>
-                <button type="submit">Delete school</button>
-              </form>
-              <form className="form" onSubmit={handleDeleteStudent}>
-                <h4>Delete Student</h4>
-                <select value={deleteIds.student_id} onChange={(event) => setDeleteIds({ ...deleteIds, student_id: event.target.value })}>
-                  <option value="">select student</option>
-                  {students.map((student) => (
-                    <option key={student.id} value={student.id}>
-                      {student.id} - {student.first_name} {student.last_name}
-                    </option>
-                  ))}
-                </select>
-                <button type="submit">Delete student</button>
-              </form>
-              <div>
-                <h4>Users in School</h4>
-                <ul>
-                  {users.map((user) => (
-                    <li key={user.id}>{user.id} - {user.email}</li>
-                  ))}
-                </ul>
-                <h4>Students in School</h4>
-                <ul>
-                  {students.map((student) => (
-                    <li key={student.id}>{student.id} - {student.first_name} {student.last_name}</li>
-                  ))}
-                </ul>
-              </div>
-            </section>
-          )}
-          <button onClick={onLogout} type="button">
-            Logout
-          </button>
-        </section>
-      )}
-    </main>
+    <AppLayout
+      me={me}
+      selectedSchoolId={selectedSchoolId}
+      setSelectedSchoolId={setSelectedSchoolId}
+      selectedSchool={selectedSchool}
+      activeSchool={activeSchool}
+      onLogout={onLogout}
+      isSchoolAdmin={isSchoolAdmin}
+      myStudents={myStudents}
+      request={authenticatedRequest}
+    />
   );
 }

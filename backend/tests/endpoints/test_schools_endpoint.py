@@ -10,11 +10,58 @@ def test_get_schools_returns_200_for_authenticated_user(client, seeded_users):
     1. Build admin auth header.
     2. Call schools list endpoint once.
     3. Receive successful response.
-    4. Validate payload shape is list.
+    4. Validate payload uses paginated envelope.
     """
     response = client.get("/api/v1/schools", headers=auth_header(token_for_user(seeded_users["admin"].id)))
     assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    payload = response.json()
+    assert isinstance(payload["items"], list)
+    assert payload["pagination"]["offset"] == 0
+    assert payload["pagination"]["limit"] == 20
+
+
+def test_get_schools_applies_limit_and_offset(client, seeded_users, db_session):
+    """
+    Validate schools list pagination slicing.
+
+    1. Seed additional schools and memberships for current user.
+    2. Call schools list endpoint with offset and limit once.
+    3. Receive successful paginated response.
+    4. Validate item count and pagination metadata.
+    """
+    school_one = create_school(db_session, "Offset One", "offset-one")
+    school_two = create_school(db_session, "Offset Two", "offset-two")
+    add_membership(db_session, seeded_users["admin"].id, school_one.id, UserRole.admin)
+    add_membership(db_session, seeded_users["admin"].id, school_two.id, UserRole.admin)
+    response = client.get("/api/v1/schools?offset=1&limit=1", headers=auth_header(token_for_user(seeded_users["admin"].id)))
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 1
+    assert payload["pagination"]["offset"] == 1
+    assert payload["pagination"]["limit"] == 1
+    assert payload["pagination"]["filtered_total"] >= 3
+
+
+def test_get_schools_applies_search_on_name_and_slug(client, seeded_users, db_session):
+    """
+    Validate schools list search filtering behavior.
+
+    1. Seed one matching and one non-matching school for user.
+    2. Call schools list endpoint with search param once.
+    3. Receive successful paginated response.
+    4. Validate only matching school is returned.
+    """
+    matching = create_school(db_session, "Needle Academy", "needle-academy")
+    non_matching = create_school(db_session, "Other Campus", "other-campus")
+    add_membership(db_session, seeded_users["admin"].id, matching.id, UserRole.admin)
+    add_membership(db_session, seeded_users["admin"].id, non_matching.id, UserRole.admin)
+    response = client.get("/api/v1/schools?search=needle", headers=auth_header(token_for_user(seeded_users["admin"].id)))
+    assert response.status_code == 200
+    payload = response.json()
+    slugs = {item["slug"] for item in payload["items"]}
+    assert "needle-academy" in slugs
+    assert "other-campus" not in slugs
+    assert payload["pagination"]["filtered_total"] <= payload["pagination"]["total"]
 
 
 def test_get_school_returns_400_when_header_is_missing(client, seeded_users):

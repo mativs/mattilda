@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.application.services.pagination_service import paginate_scalars
 from app.application.services.user_service import (
     create_user,
     delete_user,
@@ -10,7 +11,7 @@ from app.application.services.user_service import (
     update_user,
 )
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import User, UserSchoolRole
+from app.infrastructure.db.models import User, UserProfile, UserSchoolRole
 from app.infrastructure.db.session import get_db
 from app.interfaces.api.v1.dependencies.auth import (
     get_current_school_id,
@@ -18,24 +19,36 @@ from app.interfaces.api.v1.dependencies.auth import (
     require_school_roles,
     require_self_or_school_roles,
 )
-from app.interfaces.api.v1.schemas.user import UserCreate, UserResponse, UserUpdate
+from app.interfaces.api.v1.dependencies.pagination import get_pagination_params
+from app.interfaces.api.v1.schemas.pagination import PaginationParams
+from app.interfaces.api.v1.schemas.user import UserCreate, UserListResponse, UserResponse, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.get("", response_model=list[UserResponse], dependencies=[Depends(require_school_roles([UserRole.admin]))])
-def get_users(school_id: int = Depends(get_current_school_id), db: Session = Depends(get_db)):
-    users = (
-        db.execute(
-            select(User)
-            .join(UserSchoolRole, UserSchoolRole.user_id == User.id)
-            .where(UserSchoolRole.school_id == school_id, User.deleted_at.is_(None))
-            .order_by(User.id)
-        )
-        .scalars()
-        .all()
+@router.get("", response_model=UserListResponse, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+def get_users(
+    school_id: int = Depends(get_current_school_id),
+    pagination: PaginationParams = Depends(get_pagination_params),
+    db: Session = Depends(get_db),
+):
+    base_query = (
+        select(User)
+        .distinct(User.id)
+        .join(UserSchoolRole, UserSchoolRole.user_id == User.id)
+        .join(UserProfile, UserProfile.user_id == User.id)
+        .where(UserSchoolRole.school_id == school_id, User.deleted_at.is_(None))
+        .order_by(User.id)
     )
-    return [serialize_user_response(user) for user in users]
+    users, meta = paginate_scalars(
+        db=db,
+        base_query=base_query,
+        offset=pagination.offset,
+        limit=pagination.limit,
+        search=pagination.search,
+        search_columns=[User.email, UserProfile.first_name, UserProfile.last_name],
+    )
+    return {"items": [serialize_user_response(user) for user in users], "pagination": meta}
 
 
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_school_roles([UserRole.admin]))])

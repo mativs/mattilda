@@ -3,11 +3,12 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.application.errors import ConflictError
+from app.application.errors import ConflictError, NotFoundError
+from app.application.services.association_sync_service import apply_partial_sync_operations_from_existing_keys
 from app.application.services.security_service import hash_password
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import User, UserProfile
-from app.interfaces.api.v1.schemas.user import UserCreate, UserUpdate
+from app.infrastructure.db.models import School, User, UserProfile, UserSchoolRole
+from app.interfaces.api.v1.schemas.user import UserAssociationsUpdate, UserCreate, UserSchoolRoleAssociationUpdate, UserUpdate
 
 
 def get_user_by_id(db: Session, user_id: int) -> User | None:
@@ -62,6 +63,9 @@ def update_user(db: Session, user: User, payload: UserUpdate) -> User:
             user.profile.phone = payload.profile.phone
         if payload.profile.address is not None:
             user.profile.address = payload.profile.address
+
+    if payload.associations is not None:
+        apply_user_association_updates(db=db, user=user, associations=payload.associations)
 
     db.commit()
     db.refresh(user)
@@ -118,3 +122,42 @@ def get_user_students(user: User) -> list[dict]:
         school_ids = [school_link.school_id for school_link in link.student.school_links if school_link.school.deleted_at is None]
         students[link.student_id]["school_ids"] = sorted(set(school_ids))
     return list(students.values())
+
+
+def _user_school_role_key(value: UserSchoolRoleAssociationUpdate) -> str:
+    return f"{value.school_id}:{value.role.value}"
+
+
+def apply_user_association_updates(db: Session, user: User, associations: UserAssociationsUpdate) -> None:
+    existing_memberships = list(
+        db.execute(select(UserSchoolRole).where(UserSchoolRole.user_id == user.id)).scalars().all()
+    )
+    existing_keys = {f"{membership.school_id}:{membership.role}" for membership in existing_memberships}
+    add_operations = associations.add.school_roles
+    remove_operations = associations.remove.school_roles
+
+    def apply_add(operation: UserSchoolRoleAssociationUpdate) -> None:
+        school = db.execute(select(School).where(School.id == operation.school_id, School.deleted_at.is_(None))).scalar_one_or_none()
+        if school is None:
+            raise NotFoundError("School not found")
+        db.add(UserSchoolRole(user_id=user.id, school_id=operation.school_id, role=operation.role.value))
+
+    def apply_remove(operation: UserSchoolRoleAssociationUpdate) -> None:
+        membership = db.execute(
+            select(UserSchoolRole).where(
+                UserSchoolRole.user_id == user.id,
+                UserSchoolRole.school_id == operation.school_id,
+                UserSchoolRole.role == operation.role.value,
+            )
+        ).scalar_one_or_none()
+        if membership is not None:
+            db.delete(membership)
+
+    apply_partial_sync_operations_from_existing_keys(
+        existing_keys=existing_keys,
+        to_add=add_operations,
+        to_remove=remove_operations,
+        key_fn=_user_school_role_key,
+        apply_add=apply_add,
+        apply_remove=apply_remove,
+    )

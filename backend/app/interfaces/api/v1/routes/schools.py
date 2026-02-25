@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import cast
 
+from app.application.services.pagination_service import paginate_scalars
 from app.application.services.school_service import (
     add_user_school_role,
     create_school,
     delete_school,
     get_school_by_id,
-    list_schools_for_user,
     remove_user_school_roles,
     serialize_school_response,
     update_school,
@@ -23,16 +24,36 @@ from app.interfaces.api.v1.dependencies.auth import (
     require_school_admin,
     require_school_roles,
 )
-from app.interfaces.api.v1.schemas.school import SchoolCreate, SchoolResponse, SchoolUpdate
+from app.interfaces.api.v1.dependencies.pagination import get_pagination_params
+from app.interfaces.api.v1.schemas.pagination import PaginationParams
+from app.interfaces.api.v1.schemas.school import SchoolCreate, SchoolListResponse, SchoolResponse, SchoolUpdate
 from app.interfaces.api.v1.schemas.student import UserSchoolMembershipPayload
 
 router = APIRouter(prefix="/schools", tags=["schools"])
 
 
-@router.get("", response_model=list[SchoolResponse])
-def get_schools(current_user: User = Depends(require_authenticated), db: Session = Depends(get_db)):
-    schools = list_schools_for_user(db=db, user=current_user)
-    return [serialize_school_response(school) for school in schools]
+@router.get("", response_model=SchoolListResponse)
+def get_schools(
+    current_user: User = Depends(require_authenticated),
+    pagination: PaginationParams = Depends(get_pagination_params),
+    db: Session = Depends(get_db),
+):
+    base_query = (
+        select(School)
+        .distinct(School.id)
+        .join(UserSchoolRole, UserSchoolRole.school_id == School.id)
+        .where(UserSchoolRole.user_id == current_user.id, School.deleted_at.is_(None))
+        .order_by(School.id)
+    )
+    schools, meta = paginate_scalars(
+        db=db,
+        base_query=base_query,
+        offset=pagination.offset,
+        limit=pagination.limit,
+        search=pagination.search,
+        search_columns=[School.name, School.slug],
+    )
+    return {"items": [serialize_school_response(school) for school in schools], "pagination": meta}
 
 
 @router.post("", response_model=SchoolResponse, status_code=status.HTTP_201_CREATED)

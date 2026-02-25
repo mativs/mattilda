@@ -4,8 +4,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.application.errors import ConflictError, NotFoundError
+from app.application.services.association_sync_service import apply_partial_sync_operations_from_existing_keys
 from app.infrastructure.db.models import School, Student, StudentSchool, User, UserStudent
-from app.interfaces.api.v1.schemas.student import StudentCreate, StudentUpdate
+from app.interfaces.api.v1.schemas.student import StudentAssociationsUpdate, StudentCreate, StudentUpdate
 
 
 def list_students_for_school(db: Session, school_id: int) -> list[Student]:
@@ -41,6 +42,49 @@ def list_students_for_user_in_school(db: Session, user_id: int, school_id: int) 
 
 def get_student_by_id(db: Session, student_id: int) -> Student | None:
     return db.execute(select(Student).where(Student.id == student_id, Student.deleted_at.is_(None))).scalar_one_or_none()
+
+
+def get_visible_student_for_user(db: Session, student_id: int, school_id: int, user_id: int, is_admin: bool) -> Student | None:
+    query = (
+        select(Student)
+        .join(StudentSchool, StudentSchool.student_id == Student.id)
+        .where(
+            Student.id == student_id,
+            StudentSchool.school_id == school_id,
+            Student.deleted_at.is_(None),
+        )
+    )
+    if not is_admin:
+        query = query.join(UserStudent, UserStudent.student_id == Student.id).where(UserStudent.user_id == user_id)
+    return db.execute(query).scalar_one_or_none()
+
+
+def serialize_student_response(student: Student) -> dict:
+    user_ids = sorted({link.user_id for link in student.user_links if link.user.deleted_at is None})
+    school_ids = sorted({link.school_id for link in student.school_links if link.school.deleted_at is None})
+    users = []
+    for link in student.user_links:
+        if link.user.deleted_at is not None:
+            continue
+        full_name = f"{link.user.profile.first_name} {link.user.profile.last_name}".strip()
+        users.append({"id": link.user_id, "name": full_name, "email": link.user.email})
+    schools = []
+    for link in student.school_links:
+        if link.school.deleted_at is not None:
+            continue
+        schools.append({"id": link.school_id, "name": link.school.name, "slug": link.school.slug})
+    return {
+        "id": student.id,
+        "first_name": student.first_name,
+        "last_name": student.last_name,
+        "external_id": student.external_id,
+        "created_at": student.created_at,
+        "updated_at": student.updated_at,
+        "user_ids": user_ids,
+        "school_ids": school_ids,
+        "users": sorted(users, key=lambda item: item["id"]),
+        "schools": sorted(schools, key=lambda item: item["id"]),
+    }
 
 
 def create_student(db: Session, payload: StudentCreate) -> Student:
@@ -82,6 +126,10 @@ def update_student(db: Session, student: Student, payload: StudentUpdate) -> Stu
         student.first_name = payload.first_name
     if payload.last_name is not None:
         student.last_name = payload.last_name
+
+    if payload.associations is not None:
+        apply_student_association_updates(db=db, student=student, associations=payload.associations)
+
     db.commit()
     db.refresh(student)
     return student
@@ -152,3 +200,65 @@ def deassociate_student_school(db: Session, student_id: int, school_id: int) -> 
         raise NotFoundError("Association not found")
     db.delete(link)
     db.commit()
+
+
+def _student_user_link_key(value: int) -> str:
+    return str(value)
+
+
+def _student_school_link_key(value: int) -> str:
+    return str(value)
+
+
+def apply_student_association_updates(db: Session, student: Student, associations: StudentAssociationsUpdate) -> None:
+    existing_user_links = list(
+        db.execute(select(UserStudent).where(UserStudent.student_id == student.id)).scalars().all()
+    )
+    existing_school_links = list(
+        db.execute(select(StudentSchool).where(StudentSchool.student_id == student.id)).scalars().all()
+    )
+    existing_user_keys = {str(link.user_id) for link in existing_user_links}
+    existing_school_keys = {str(link.school_id) for link in existing_school_links}
+
+    def apply_add_user(user_id: int) -> None:
+        user = db.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None))).scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("User not found")
+        db.add(UserStudent(user_id=user_id, student_id=student.id))
+
+    def apply_remove_user(user_id: int) -> None:
+        link = db.execute(
+            select(UserStudent).where(UserStudent.user_id == user_id, UserStudent.student_id == student.id)
+        ).scalar_one_or_none()
+        if link is not None:
+            db.delete(link)
+
+    def apply_add_school(school_id: int) -> None:
+        school = db.execute(select(School).where(School.id == school_id, School.deleted_at.is_(None))).scalar_one_or_none()
+        if school is None:
+            raise NotFoundError("School not found")
+        db.add(StudentSchool(student_id=student.id, school_id=school_id))
+
+    def apply_remove_school(school_id: int) -> None:
+        link = db.execute(
+            select(StudentSchool).where(StudentSchool.student_id == student.id, StudentSchool.school_id == school_id)
+        ).scalar_one_or_none()
+        if link is not None:
+            db.delete(link)
+
+    apply_partial_sync_operations_from_existing_keys(
+        existing_keys=existing_user_keys,
+        to_add=associations.add.user_ids,
+        to_remove=associations.remove.user_ids,
+        key_fn=_student_user_link_key,
+        apply_add=apply_add_user,
+        apply_remove=apply_remove_user,
+    )
+    apply_partial_sync_operations_from_existing_keys(
+        existing_keys=existing_school_keys,
+        to_add=associations.add.school_ids,
+        to_remove=associations.remove.school_ids,
+        key_fn=_student_school_link_key,
+        apply_add=apply_add_school,
+        apply_remove=apply_remove_school,
+    )

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.application.errors import ConflictError
+from app.application.errors import ConflictError, NotFoundError
 from app.application.services.user_service import (
     create_user,
     delete_user,
@@ -12,8 +12,10 @@ from app.application.services.user_service import (
 )
 from app.interfaces.api.v1.schemas.user import UserCreate, UserProfileCreate, UserProfileUpdate, UserUpdate
 from tests.helpers.factories import create_student as factory_create_student
+from tests.helpers.factories import create_school, add_membership
 from tests.helpers.factories import create_user as factory_create_user
 from tests.helpers.factories import link_student_school, link_user_student
+from app.domain.roles import UserRole
 
 
 def _user_create_payload(email: str) -> UserCreate:
@@ -175,3 +177,56 @@ def test_serialize_user_response_excludes_soft_deleted_students(db_session, seed
     db_session.commit()
     serialized = serialize_user_response(seeded_users["student"])
     assert all(item["id"] != student.id for item in serialized["students"])
+
+
+def test_update_user_applies_association_add_and_remove_operations(db_session):
+    """
+    Validate update_user association add/remove partial sync.
+
+    1. Seed user with one existing school-role membership.
+    2. Call update_user with association add and remove payload.
+    3. Read serialized user memberships after update.
+    4. Validate removed role is absent and added role is present.
+    """
+    user = factory_create_user(db_session, email="assoc-update@example.com")
+    school_a = create_school(db_session, "School A", "school-a")
+    school_b = create_school(db_session, "School B", "school-b")
+    add_membership(db_session, user.id, school_a.id, UserRole.teacher)
+    updated = update_user(
+        db_session,
+        user,
+        UserUpdate(
+            associations={
+                "add": {"school_roles": [{"school_id": school_b.id, "role": "admin"}]},
+                "remove": {"school_roles": [{"school_id": school_a.id, "role": "teacher"}]},
+            }
+        ),
+    )
+    serialized = serialize_user_response(updated)
+    memberships = {(school["school_id"], role.value) for school in serialized["schools"] for role in school["roles"]}
+    assert (school_a.id, UserRole.teacher.value) not in memberships
+    assert (school_b.id, UserRole.admin.value) in memberships
+
+
+def test_update_user_raises_not_found_for_missing_school_in_association_add(db_session):
+    """
+    Validate update_user association add missing-school branch.
+
+    1. Seed user with no special school membership requirements.
+    2. Call update_user with association add referencing unknown school.
+    3. Validate service raises NotFoundError.
+    4. Validate exception message matches expected not-found.
+    """
+    user = factory_create_user(db_session, email="assoc-missing-school@example.com")
+    with pytest.raises(NotFoundError) as exc:
+        update_user(
+            db_session,
+            user,
+            UserUpdate(
+                associations={
+                    "add": {"school_roles": [{"school_id": 999999, "role": "teacher"}]},
+                    "remove": {"school_roles": []},
+                }
+            ),
+        )
+    assert str(exc.value) == "School not found"
