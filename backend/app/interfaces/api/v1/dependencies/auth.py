@@ -65,7 +65,7 @@ def get_current_school_memberships(
     )
     if not memberships:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User has no access to this school")
-    return memberships
+    return list(memberships)
 
 
 def require_school_roles(allowed_roles: list[UserRole]) -> Callable:

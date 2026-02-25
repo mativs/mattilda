@@ -81,6 +81,20 @@ make test
 Tests run locally (from your host machine) with `uv`, and use a real PostgreSQL container via `testcontainers`.
 Ensure both `uv` and Docker are available locally before running tests.
 
+## Code quality checks
+
+```bash
+make lint
+make format
+make typecheck
+make quality
+```
+
+- `make lint`: runs `ruff check` on backend `app` and `tests`.
+- `make format`: runs `ruff format` on backend `app` and `tests`.
+- `make typecheck`: runs `mypy` on backend `app`.
+- `make quality`: runs lint + typecheck + full tests.
+
 ### Local test prerequisites
 
 1. Install `uv` (if not installed):

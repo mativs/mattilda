@@ -1,11 +1,4 @@
-def login(client, email: str, password: str) -> str:
-    response = client.post(
-        "/api/v1/auth/token",
-        data={"username": email, "password": password},
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    assert response.status_code == 200
-    return response.json()["access_token"]
+from app.application.services.security_service import create_access_token
 
 
 def auth_header(token: str) -> dict[str, str]:
@@ -14,3 +7,7 @@ def auth_header(token: str) -> dict[str, str]:
 
 def school_header(token: str, school_id: int) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "X-School-Id": str(school_id)}
+
+
+def token_for_user(user_id: int) -> str:
+    return create_access_token(user_id)

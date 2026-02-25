@@ -9,7 +9,7 @@ from app.interfaces.api.v1.schemas.student import StudentCreate, StudentUpdate
 
 
 def list_students_for_school(db: Session, school_id: int) -> list[Student]:
-    return (
+    return list(
         db.execute(
             select(Student)
             .join(StudentSchool, StudentSchool.student_id == Student.id)
@@ -22,7 +22,7 @@ def list_students_for_school(db: Session, school_id: int) -> list[Student]:
 
 
 def list_students_for_user_in_school(db: Session, user_id: int, school_id: int) -> list[Student]:
-    return (
+    return list(
         db.execute(
             select(Student)
             .join(StudentSchool, StudentSchool.student_id == Student.id)

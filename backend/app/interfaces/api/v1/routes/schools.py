@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from typing import cast
 
 from app.application.services.school_service import (
     add_user_school_role,
@@ -65,7 +66,7 @@ def update_school_endpoint(
 ):
     if selected_school_id != school_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Path school id must match X-School-Id")
-    school = get_school_by_id(db=db, school_id=school_id)
+    school = cast(School, get_school_by_id(db=db, school_id=school_id))
     updated_school = update_school(db=db, school=school, payload=payload)
     return serialize_school_response(updated_school)
 
@@ -78,7 +79,7 @@ def delete_school_endpoint(
 ):
     if selected_school_id != school_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Path school id must match X-School-Id")
-    school = get_school_by_id(db=db, school_id=school_id)
+    school = cast(School, get_school_by_id(db=db, school_id=school_id))
     delete_school(db=db, school=school)
 
 

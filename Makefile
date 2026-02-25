@@ -6,7 +6,7 @@ MIGRATE_ARGS ?=
 SEED_ARGS ?=
 LOGS_SERVICE ?=
 
-.PHONY: help init-env check-uv up down build restart reset ps logs test test-subset migrate seed shell clean
+.PHONY: help init-env check-uv up down build restart reset ps logs test test-subset lint format typecheck quality migrate seed shell clean
 
 help:
 	@echo "Available targets:"
@@ -22,6 +22,10 @@ help:
 	@echo "  make test [paths...]   # Run backend tests, optional positional test paths"
 	@echo "  make test-subset [paths...] # Run subset without global coverage gate"
 	@echo "                         # Add pytest flags with PYTEST_ARGS='-q -k auth'"
+	@echo "  make lint              # Run ruff checks for backend app/tests"
+	@echo "  make format            # Run ruff formatter for backend app/tests"
+	@echo "  make typecheck         # Run mypy for backend app"
+	@echo "  make quality           # Run lint + tests"
 	@echo "  make migrate           # Run alembic upgrade head (set MIGRATE_ARGS='--sql')"
 	@echo "  make seed              # Run seed script (set SEED_ARGS='--help' if script supports it)"
 	@echo "  make shell             # Open shell in backend container"
@@ -57,6 +61,17 @@ test: check-uv
 
 test-subset: check-uv
 	cd backend && uv run pytest --override-ini addopts= $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
+
+lint: check-uv
+	cd backend && uv run ruff check app tests
+
+format: check-uv
+	cd backend && uv run ruff format app tests
+
+typecheck: check-uv
+	cd backend && uv run mypy app
+
+quality: lint typecheck test
 
 migrate:
 	$(COMPOSE) run --rm $(BACKEND_SERVICE) uv run alembic upgrade head $(MIGRATE_ARGS)

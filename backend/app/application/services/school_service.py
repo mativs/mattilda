@@ -84,7 +84,7 @@ def list_schools_for_user(db: Session, user: User) -> list[School]:
         .options(joinedload(School.members).joinedload(UserSchoolRole.user))
         .order_by(School.id)
     )
-    return db.execute(query).unique().scalars().all()
+    return list(db.execute(query).unique().scalars().all())
 
 
 def create_school(db: Session, payload: SchoolCreate, creator_user_id: int) -> School:

@@ -15,7 +15,6 @@ from app.infrastructure.db.session import get_db
 from app.interfaces.api.v1.dependencies.auth import (
     get_current_school_id,
     require_authenticated,
-    require_school_admin,
     require_school_roles,
     require_self_or_school_roles,
 )

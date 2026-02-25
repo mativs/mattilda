@@ -1,110 +1,260 @@
-from tests.helpers.auth import auth_header, login, school_header
+from app.domain.roles import UserRole
+from tests.helpers.auth import auth_header, school_header, token_for_user
+from tests.helpers.factories import add_membership, create_school
 
 
-def test_schools_endpoints_membership_header_and_crud_contract(client, seeded_users):
+def test_get_schools_returns_200_for_authenticated_user(client, seeded_users):
     """
-    Validate schools endpoint behavior for membership and CRUD operations.
+    Validate schools list success for authenticated user.
 
-    1. Validate school listing and school fetch header checks.
-    2. Validate admin create school auto-membership semantics.
-    3. Validate update/delete contracts and mismatch header branches.
-    4. Validate user-school association and not-found branches.
+    1. Build admin auth header.
+    2. Call schools list endpoint once.
+    3. Receive successful response.
+    4. Validate payload shape is list.
     """
-    north_school_id = seeded_users["north_school"].id
-    south_school_id = seeded_users["south_school"].id
+    response = client.get("/api/v1/schools", headers=auth_header(token_for_user(seeded_users["admin"].id)))
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
 
-    admin_token = login(client, "admin@example.com", "admin123")
-    student_token = login(client, "student@example.com", "student123")
 
-    admin_schools = client.get("/api/v1/schools", headers=auth_header(admin_token))
-    assert admin_schools.status_code == 200
-    assert len(admin_schools.json()) >= 2
+def test_get_school_returns_400_when_header_is_missing(client, seeded_users):
+    """
+    Validate school get-by-id missing header branch.
 
-    student_schools = client.get("/api/v1/schools", headers=auth_header(student_token))
-    assert student_schools.status_code == 200
-    assert len(student_schools.json()) == 1
-
-    missing_header = client.get(f"/api/v1/schools/{north_school_id}", headers=auth_header(admin_token))
-    assert missing_header.status_code == 400
-    get_ok = client.get(
-        f"/api/v1/schools/{north_school_id}",
-        headers=school_header(admin_token, north_school_id),
+    1. Build auth header without school selector.
+    2. Call school get endpoint once.
+    3. Receive bad request response.
+    4. Validate X-School-Id is required.
+    """
+    response = client.get(
+        f"/api/v1/schools/{seeded_users['north_school'].id}",
+        headers=auth_header(token_for_user(seeded_users["admin"].id)),
     )
-    assert get_ok.status_code == 200
-    mismatch_header = client.get(
-        f"/api/v1/schools/{north_school_id}",
-        headers=school_header(admin_token, south_school_id),
-    )
-    assert mismatch_header.status_code == 400
+    assert response.status_code == 400
 
-    created = client.post(
+
+def test_get_school_returns_400_for_mismatched_path_and_header(client, seeded_users):
+    """
+    Validate school get-by-id header/path mismatch branch.
+
+    1. Build admin header with different school id.
+    2. Call school get endpoint once.
+    3. Receive bad request response.
+    4. Validate path school id must match header.
+    """
+    response = client.get(
+        f"/api/v1/schools/{seeded_users['north_school'].id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["south_school"].id),
+    )
+    assert response.status_code == 400
+
+
+def test_get_school_returns_200_for_valid_header_and_membership(client, seeded_users):
+    """
+    Validate school get-by-id success branch.
+
+    1. Build admin header for matching school id.
+    2. Call school get endpoint once.
+    3. Receive successful response.
+    4. Validate returned school id.
+    """
+    response = client.get(
+        f"/api/v1/schools/{seeded_users['north_school'].id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    assert response.json()["id"] == seeded_users["north_school"].id
+
+
+def test_create_school_returns_201_for_school_admin(client, seeded_users):
+    """
+    Validate school creation success for school admin.
+
+    1. Build admin school-scoped header.
+    2. Call create school endpoint once.
+    3. Receive created response.
+    4. Validate creator appears with admin role.
+    """
+    response = client.post(
         "/api/v1/schools",
-        headers=school_header(admin_token, north_school_id),
-        json={"name": "Endpoint West", "slug": "endpoint-west"},
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={"name": "Endpoint School", "slug": "endpoint-school"},
     )
-    assert created.status_code == 201
-    created_id = created.json()["id"]
-    members = {member["user_id"]: member["roles"] for member in created.json()["members"]}
-    assert seeded_users["admin"].id in members
-    assert "admin" in members[seeded_users["admin"].id]
+    assert response.status_code == 201
+    roles_map = {member["user_id"]: member["roles"] for member in response.json()["members"]}
+    assert "admin" in roles_map[seeded_users["admin"].id]
 
-    duplicate_slug = client.post(
+
+def test_create_school_returns_409_for_duplicate_slug(client, seeded_users, db_session):
+    """
+    Validate school creation duplicate slug conflict.
+
+    1. Seed school with target slug.
+    2. Call create school endpoint with duplicate slug.
+    3. Receive conflict response.
+    4. Validate duplicate slug is rejected.
+    """
+    create_school(db_session, "Existing", "dup-school")
+    response = client.post(
         "/api/v1/schools",
-        headers=school_header(admin_token, north_school_id),
-        json={"name": "Endpoint West 2", "slug": "endpoint-west"},
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={"name": "Duplicate", "slug": "dup-school"},
     )
-    assert duplicate_slug.status_code == 409
+    assert response.status_code == 409
 
-    forbidden_create = client.post(
+
+def test_create_school_returns_403_for_non_admin(client, seeded_users):
+    """
+    Validate school creation forbidden for non-admin.
+
+    1. Build student school-scoped header.
+    2. Call create school endpoint once.
+    3. Receive forbidden response.
+    4. Validate non-admin cannot create schools.
+    """
+    response = client.post(
         "/api/v1/schools",
-        headers=school_header(student_token, north_school_id),
-        json={"name": "Nope", "slug": "nope"},
+        headers=school_header(token_for_user(seeded_users["student"].id), seeded_users["north_school"].id),
+        json={"name": "Forbidden", "slug": "forbidden-school"},
     )
-    assert forbidden_create.status_code == 403
+    assert response.status_code == 403
 
-    update_ok = client.put(
-        f"/api/v1/schools/{created_id}",
-        headers=school_header(admin_token, created_id),
-        json={"name": "Endpoint West Edited"},
+
+def test_update_school_returns_200_for_admin(client, seeded_users, db_session):
+    """
+    Validate school update success for admin.
+
+    1. Seed a school and add admin membership for same school.
+    2. Call update school endpoint once.
+    3. Receive successful response.
+    4. Validate updated name field.
+    """
+    school = create_school(db_session, "To Update", "to-update")
+    add_membership(db_session, seeded_users["admin"].id, school.id, UserRole.admin)
+    response = client.put(
+        f"/api/v1/schools/{school.id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), school.id),
+        json={"name": "Updated School"},
     )
-    assert update_ok.status_code == 200
-    mismatch_update = client.put(
-        f"/api/v1/schools/{created_id}",
-        headers=school_header(admin_token, north_school_id),
+    assert response.status_code == 200
+    assert response.json()["name"] == "Updated School"
+
+
+def test_update_school_returns_400_for_mismatched_header(client, seeded_users, db_session):
+    """
+    Validate school update header/path mismatch branch.
+
+    1. Seed school and admin membership.
+    2. Call update endpoint with different school id header.
+    3. Receive bad request response.
+    4. Validate path/header mismatch is rejected.
+    """
+    school = create_school(db_session, "Mismatch", "mismatch")
+    add_membership(db_session, seeded_users["admin"].id, school.id, UserRole.admin)
+    response = client.put(
+        f"/api/v1/schools/{school.id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
         json={"name": "Mismatch"},
     )
-    assert mismatch_update.status_code == 400
+    assert response.status_code == 400
 
-    update_missing = client.put(
-        "/api/v1/schools/9999",
-        headers=school_header(admin_token, 9999),
+
+def test_update_school_returns_404_for_missing_school(client, seeded_users):
+    """
+    Validate school update missing-school branch.
+
+    1. Build admin header matching missing school id.
+    2. Call update endpoint with non-existing id.
+    3. Receive not found response.
+    4. Validate missing schools return 404.
+    """
+    response = client.put(
+        "/api/v1/schools/999999",
+        headers=school_header(token_for_user(seeded_users["admin"].id), 999999),
         json={"name": "Missing"},
     )
-    assert update_missing.status_code == 404
+    assert response.status_code == 404
 
-    associate_user = client.post(
-        f"/api/v1/schools/{north_school_id}/users",
-        headers=school_header(admin_token, north_school_id),
+
+def test_associate_user_to_school_returns_201_for_admin(client, seeded_users):
+    """
+    Validate user-school association success.
+
+    1. Build admin school-scoped header.
+    2. Call school-user association endpoint once.
+    3. Receive created response.
+    4. Validate status code is 201.
+    """
+    response = client.post(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/users",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
         json={"user_id": seeded_users["teacher"].id, "role": "admin"},
     )
-    assert associate_user.status_code == 201
-    associate_missing_user = client.post(
-        f"/api/v1/schools/{north_school_id}/users",
-        headers=school_header(admin_token, north_school_id),
+    assert response.status_code == 201
+
+
+def test_associate_user_to_school_returns_404_for_missing_user(client, seeded_users):
+    """
+    Validate user-school association missing-user branch.
+
+    1. Build admin school-scoped header.
+    2. Call association endpoint with unknown user id.
+    3. Receive not found response.
+    4. Validate missing user returns 404.
+    """
+    response = client.post(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/users",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
         json={"user_id": 999999, "role": "teacher"},
     )
-    assert associate_missing_user.status_code == 404
+    assert response.status_code == 404
 
-    deassociate_user = client.delete(
-        f"/api/v1/schools/{north_school_id}/users/{seeded_users['teacher'].id}",
-        headers=school_header(admin_token, north_school_id),
-    )
-    assert deassociate_user.status_code == 204
 
-    delete_ok = client.delete(f"/api/v1/schools/{created_id}", headers=school_header(admin_token, created_id))
-    assert delete_ok.status_code == 204
-    mismatch_delete = client.delete(
-        f"/api/v1/schools/{north_school_id}",
-        headers=school_header(admin_token, south_school_id),
+def test_deassociate_user_from_school_returns_204_for_admin(client, seeded_users):
+    """
+    Validate user-school deassociation success.
+
+    1. Build admin school-scoped header.
+    2. Call deassociation endpoint once.
+    3. Receive no-content response.
+    4. Validate status code is 204.
+    """
+    response = client.delete(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/users/{seeded_users['teacher'].id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
     )
-    assert mismatch_delete.status_code == 400
+    assert response.status_code == 204
+
+
+def test_delete_school_returns_204_for_admin(client, seeded_users, db_session):
+    """
+    Validate school deletion success for admin.
+
+    1. Seed school and add admin membership.
+    2. Call delete school endpoint once.
+    3. Receive no-content response.
+    4. Validate status code is 204.
+    """
+    school = create_school(db_session, "Delete School", "delete-school")
+    add_membership(db_session, seeded_users["admin"].id, school.id, UserRole.admin)
+    response = client.delete(
+        f"/api/v1/schools/{school.id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), school.id),
+    )
+    assert response.status_code == 204
+
+
+def test_delete_school_returns_400_for_mismatched_header(client, seeded_users):
+    """
+    Validate school deletion header/path mismatch branch.
+
+    1. Build admin header for different school id.
+    2. Call delete school endpoint once.
+    3. Receive bad request response.
+    4. Validate path/header mismatch is rejected.
+    """
+    response = client.delete(
+        f"/api/v1/schools/{seeded_users['north_school'].id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["south_school"].id),
+    )
+    assert response.status_code == 400

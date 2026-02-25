@@ -1,44 +1,81 @@
-from app.application.services.security_service import create_access_token
-
-from tests.helpers.auth import auth_header
+from tests.helpers.auth import auth_header, token_for_user
 
 
-def test_issue_token_success_and_invalid_credentials(client, db_session, seeded_users):
+def test_issue_token_returns_200_for_valid_credentials(client, seeded_users):
     """
-    Validate auth token endpoint contract for success and failures.
+    Validate token issuance with valid credentials.
 
-    1. Request token with valid seeded credentials.
-    2. Validate access token is present in successful response.
-    3. Request token with wrong password and unknown user.
-    4. Validate invalid credential attempts return unauthorized status.
+    1. Call auth token endpoint with valid seeded credentials.
+    2. Receive token response.
+    3. Validate status code is successful.
+    4. Validate access token key exists.
     """
-    ok = client.post(
+    response = client.post(
         "/api/v1/auth/token",
         data={"username": "admin@example.com", "password": "admin123"},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    assert ok.status_code == 200
-    assert "access_token" in ok.json()
+    assert response.status_code == 200
+    assert "access_token" in response.json()
 
-    wrong_password = client.post(
+
+def test_issue_token_returns_401_for_wrong_password(client, seeded_users):
+    """
+    Validate token endpoint wrong-password branch.
+
+    1. Call auth token endpoint with valid email and wrong password.
+    2. Receive error response.
+    3. Validate unauthorized status code.
+    4. Validate endpoint rejects credentials.
+    """
+    response = client.post(
         "/api/v1/auth/token",
         data={"username": "admin@example.com", "password": "wrong"},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    assert wrong_password.status_code == 401
+    assert response.status_code == 401
 
-    unknown = client.post(
+
+def test_issue_token_returns_401_for_unknown_email(client):
+    """
+    Validate token endpoint unknown-email branch.
+
+    1. Call auth token endpoint with non-existing email.
+    2. Receive error response.
+    3. Validate unauthorized status code.
+    4. Validate endpoint rejects unknown users.
+    """
+    response = client.post(
         "/api/v1/auth/token",
-        data={"username": "unknown@example.com", "password": "admin123"},
+        data={"username": "missing@example.com", "password": "admin123"},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    assert unknown.status_code == 401
+    assert response.status_code == 401
 
-    invalid_token = client.get("/api/v1/users/me", headers=auth_header("invalid-token"))
-    assert invalid_token.status_code == 401
 
-    inactive_token = create_access_token(seeded_users["student"].id)
+def test_me_returns_401_for_invalid_token(client):
+    """
+    Validate protected me endpoint invalid-token branch.
+
+    1. Call users me endpoint with malformed bearer token.
+    2. Receive unauthorized response.
+    3. Validate status code is unauthorized.
+    4. Validate invalid token is rejected.
+    """
+    response = client.get("/api/v1/users/me", headers=auth_header("invalid-token"))
+    assert response.status_code == 401
+
+
+def test_me_returns_401_for_inactive_user_token(client, db_session, seeded_users):
+    """
+    Validate protected me endpoint inactive-user branch.
+
+    1. Mark seeded user inactive and mint token for same user id.
+    2. Call users me endpoint with that token.
+    3. Receive unauthorized response.
+    4. Validate inactive users cannot authenticate.
+    """
     seeded_users["student"].is_active = False
     db_session.commit()
-    inactive_user = client.get("/api/v1/users/me", headers=auth_header(inactive_token))
-    assert inactive_user.status_code == 401
+    response = client.get("/api/v1/users/me", headers=auth_header(token_for_user(seeded_users["student"].id)))
+    assert response.status_code == 401

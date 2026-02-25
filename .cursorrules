@@ -37,6 +37,11 @@
   - `backend/tests/services`: one test file per service module with small DB-backed behavior tests.
   - `backend/tests/endpoints`: one test file per route module with focused request/response and auth contract checks.
   - `backend/tests/end2end`: cross-endpoint journey tests only.
+- Keep tests small and single-action by default:
+  - Endpoint tests: exactly one HTTP request call per test method.
+  - Service tests: exactly one primary service method call per test method.
+  - Multi-step orchestration belongs only in `backend/tests/end2end`.
+- Prefer test helpers/factories for setup state (no raw SQL in test method bodies).
 - Every test method must start with a docstring in this exact style:
   """
   Short description of the test.

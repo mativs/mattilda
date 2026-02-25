@@ -1,21 +1,19 @@
-from sqlalchemy import text
-
-from tests.helpers.auth import auth_header, login, school_header
+from tests.helpers.auth import auth_header, school_header, token_for_user
+from tests.helpers.rls import prepare_rls_tester, read_dummy_records_for_school
 
 
 def test_user_school_student_end2end_flow_and_rls(client, db_session, seeded_users):
     """
     Validate a global multi-endpoint user journey with RLS verification.
 
-    1. Authenticate as admin and create a user, school, and student.
-    2. Associate the created user and student across school and user-student links.
-    3. Validate the created user can authenticate and read own profile context.
-    4. Validate PostgreSQL RLS filters dummy records by active school context.
+    1. Authenticate as admin and create user, school, and student entities via API.
+    2. Associate created user and student through school and student association endpoints.
+    3. Validate created user can fetch self profile via token authentication.
+    4. Validate RLS helper returns tenant-scoped records for each school context.
     """
     north_school_id = seeded_users["north_school"].id
     south_school_id = seeded_users["south_school"].id
-
-    admin_token = login(client, "admin@example.com", "admin123")
+    admin_token = token_for_user(seeded_users["admin"].id)
 
     created_user = client.post(
         "/api/v1/users",
@@ -60,24 +58,10 @@ def test_user_school_student_end2end_flow_and_rls(client, db_session, seeded_use
     )
     assert user_student_link.status_code == 201
 
-    flow_token = login(client, "flow-user@example.com", "flow12345")
-    me = client.get("/api/v1/users/me", headers=auth_header(flow_token))
+    me = client.get("/api/v1/users/me", headers=auth_header(token_for_user(created_user_id)))
     assert me.status_code == 200
     assert me.json()["email"] == "flow-user@example.com"
 
-    db_session.execute(text("DROP ROLE IF EXISTS rls_tester"))
-    db_session.execute(text("CREATE ROLE rls_tester LOGIN PASSWORD 'rls_tester'"))
-    db_session.execute(text("GRANT USAGE ON SCHEMA public TO rls_tester"))
-    db_session.execute(text("GRANT SELECT ON dummy_records TO rls_tester"))
-    db_session.commit()
-
-    connection = db_session.get_bind().connect()
-    connection.execute(text("SET ROLE rls_tester"))
-    connection.execute(text("SELECT set_config('app.current_school_id', :school_id, false)"), {"school_id": str(north_school_id)})
-    rls_north_records = connection.execute(text("SELECT name FROM dummy_records ORDER BY name")).all()
-    assert [record[0] for record in rls_north_records] == ["north-record"]
-
-    connection.execute(text("SELECT set_config('app.current_school_id', :school_id, false)"), {"school_id": str(south_school_id)})
-    rls_south_records = connection.execute(text("SELECT name FROM dummy_records ORDER BY name")).all()
-    assert [record[0] for record in rls_south_records] == ["south-record"]
-    connection.close()
+    prepare_rls_tester(db_session)
+    assert read_dummy_records_for_school(db_session, north_school_id) == ["north-record"]
+    assert read_dummy_records_for_school(db_session, south_school_id) == ["south-record"]

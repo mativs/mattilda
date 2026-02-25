@@ -1,108 +1,320 @@
-from tests.helpers.auth import login, school_header
+from tests.helpers.auth import school_header, token_for_user
+from tests.helpers.factories import create_student, link_student_school, link_user_student
 
 
-def test_students_endpoints_role_aware_list_and_crud_contract(client, seeded_users):
+def test_get_students_returns_200_for_school_admin(client, seeded_users):
     """
-    Validate students endpoint role-aware listing and CRUD contracts.
+    Validate students list success for admin member.
 
-    1. Validate admin and non-admin list behavior in active school.
-    2. Validate create auto-association and duplicate external id conflict.
-    3. Validate association/deassociation endpoints and error branches.
-    4. Validate update, delete, and forbidden access contracts.
+    1. Build admin school-scoped header.
+    2. Call students list endpoint once.
+    3. Receive successful response.
+    4. Validate payload type is list.
     """
-    north_school_id = seeded_users["north_school"].id
-    south_school_id = seeded_users["south_school"].id
-
-    admin_token = login(client, "admin@example.com", "admin123")
-    student_token = login(client, "student@example.com", "student123")
-
-    admin_list = client.get("/api/v1/students", headers=school_header(admin_token, north_school_id))
-    assert admin_list.status_code == 200
-    assert len(admin_list.json()) >= 2
-
-    student_list = client.get("/api/v1/students", headers=school_header(student_token, north_school_id))
-    assert student_list.status_code == 200
-    student_ids = {student["id"] for student in student_list.json()}
-    assert seeded_users["child_one"].id in student_ids
-    student_forbidden_school = client.get("/api/v1/students", headers=school_header(student_token, south_school_id))
-    assert student_forbidden_school.status_code == 403
-
-    created = client.post(
+    response = client.get(
         "/api/v1/students",
-        headers=school_header(admin_token, north_school_id),
-        json={"first_name": "End", "last_name": "Point", "external_id": "EP-001"},
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
     )
-    assert created.status_code == 201
-    created_id = created.json()["id"]
-    get_ok = client.get(f"/api/v1/students/{created_id}", headers=school_header(admin_token, north_school_id))
-    assert get_ok.status_code == 200
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
 
-    duplicate = client.post(
+
+def test_get_students_returns_200_for_non_admin_with_associations(client, seeded_users):
+    """
+    Validate students list for non-admin associated user.
+
+    1. Build student school-scoped header.
+    2. Call students list endpoint once.
+    3. Receive successful response.
+    4. Validate seeded associated student appears.
+    """
+    response = client.get(
         "/api/v1/students",
-        headers=school_header(admin_token, north_school_id),
-        json={"first_name": "End", "last_name": "Dup", "external_id": "EP-001"},
+        headers=school_header(token_for_user(seeded_users["student"].id), seeded_users["north_school"].id),
     )
-    assert duplicate.status_code == 409
+    assert response.status_code == 200
+    ids = {item["id"] for item in response.json()}
+    assert seeded_users["child_one"].id in ids
 
-    forbidden_create = client.post(
+
+def test_get_students_returns_403_for_user_without_school_membership(client, seeded_users):
+    """
+    Validate students list forbidden for users without school access.
+
+    1. Build student token with inaccessible school header.
+    2. Call students list endpoint once.
+    3. Receive forbidden response.
+    4. Validate membership guard is enforced.
+    """
+    response = client.get(
         "/api/v1/students",
-        headers=school_header(student_token, north_school_id),
+        headers=school_header(token_for_user(seeded_users["student"].id), seeded_users["south_school"].id),
+    )
+    assert response.status_code == 403
+
+
+def test_create_student_returns_201_for_admin(client, seeded_users):
+    """
+    Validate student creation success for admin.
+
+    1. Build admin school-scoped header.
+    2. Call student creation endpoint once.
+    3. Receive created response.
+    4. Validate returned external id.
+    """
+    response = client.post(
+        "/api/v1/students",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={"first_name": "Endpoint", "last_name": "Student", "external_id": "EP-001"},
+    )
+    assert response.status_code == 201
+    assert response.json()["external_id"] == "EP-001"
+
+
+def test_create_student_returns_409_for_duplicate_external_id(client, seeded_users):
+    """
+    Validate student creation duplicate external id conflict.
+
+    1. Build admin school-scoped header.
+    2. Call student creation endpoint with existing external id.
+    3. Receive conflict response.
+    4. Validate duplicate external id is rejected.
+    """
+    response = client.post(
+        "/api/v1/students",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={"first_name": "Dup", "last_name": "Student", "external_id": "STU-001"},
+    )
+    assert response.status_code == 409
+
+
+def test_create_student_returns_403_for_non_admin(client, seeded_users):
+    """
+    Validate student creation forbidden for non-admin.
+
+    1. Build student school-scoped header.
+    2. Call student creation endpoint once.
+    3. Receive forbidden response.
+    4. Validate admin role requirement is enforced.
+    """
+    response = client.post(
+        "/api/v1/students",
+        headers=school_header(token_for_user(seeded_users["student"].id), seeded_users["north_school"].id),
         json={"first_name": "No", "last_name": "Access"},
     )
-    assert forbidden_create.status_code == 403
+    assert response.status_code == 403
 
-    duplicate_school_assoc = client.post(
-        f"/api/v1/students/{created_id}/schools",
-        headers=school_header(admin_token, north_school_id),
-        json={"school_id": north_school_id},
-    )
-    assert duplicate_school_assoc.status_code == 409
 
-    school_assoc = client.post(
-        f"/api/v1/students/{created_id}/schools",
-        headers=school_header(admin_token, north_school_id),
-        json={"school_id": south_school_id},
-    )
-    assert school_assoc.status_code == 201
+def test_get_student_returns_200_for_admin(client, seeded_users):
+    """
+    Validate student get-by-id success for admin.
 
-    user_assoc = client.post(
-        f"/api/v1/students/{created_id}/users",
-        headers=school_header(admin_token, north_school_id),
-        json={"user_id": seeded_users["student"].id},
+    1. Build admin school-scoped header.
+    2. Call get student endpoint once.
+    3. Receive successful response.
+    4. Validate returned student id.
+    """
+    response = client.get(
+        f"/api/v1/students/{seeded_users['child_one'].id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
     )
-    assert user_assoc.status_code == 201
+    assert response.status_code == 200
+    assert response.json()["id"] == seeded_users["child_one"].id
 
-    deassoc_user = client.delete(
-        f"/api/v1/students/{created_id}/users/{seeded_users['student'].id}",
-        headers=school_header(admin_token, north_school_id),
-    )
-    assert deassoc_user.status_code == 204
 
-    deassoc_school = client.delete(
-        f"/api/v1/students/{created_id}/schools/{south_school_id}",
-        headers=school_header(admin_token, north_school_id),
-    )
-    assert deassoc_school.status_code == 204
+def test_get_student_returns_404_for_missing_student(client, seeded_users):
+    """
+    Validate student get-by-id missing branch.
 
-    update_ok = client.put(
-        f"/api/v1/students/{created_id}",
-        headers=school_header(admin_token, north_school_id),
-        json={"first_name": "Edited"},
+    1. Build admin school-scoped header.
+    2. Call get student endpoint with unknown id.
+    3. Receive not found response.
+    4. Validate missing students return 404.
+    """
+    response = client.get(
+        "/api/v1/students/999999",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
     )
-    assert update_ok.status_code == 200
-    get_missing = client.get("/api/v1/students/9999", headers=school_header(admin_token, north_school_id))
-    assert get_missing.status_code == 404
-    update_missing = client.put(
-        "/api/v1/students/9999",
-        headers=school_header(admin_token, north_school_id),
+    assert response.status_code == 404
+
+
+def test_update_student_returns_200_for_admin(client, seeded_users, db_session):
+    """
+    Validate student update success for admin.
+
+    1. Seed student and link to active school.
+    2. Call update endpoint once.
+    3. Receive successful response.
+    4. Validate updated first_name value.
+    """
+    student = create_student(db_session, "Update", "Target", "UPD-EP-001")
+    link_student_school(db_session, student.id, seeded_users["north_school"].id)
+    response = client.put(
+        f"/api/v1/students/{student.id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={"first_name": "Updated"},
+    )
+    assert response.status_code == 200
+    assert response.json()["first_name"] == "Updated"
+
+
+def test_update_student_returns_404_for_missing_student(client, seeded_users):
+    """
+    Validate student update missing branch.
+
+    1. Build admin school-scoped header.
+    2. Call update endpoint with unknown id.
+    3. Receive not found response.
+    4. Validate missing students return 404.
+    """
+    response = client.put(
+        "/api/v1/students/999999",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
         json={"first_name": "Missing"},
     )
-    assert update_missing.status_code == 404
-    delete_missing = client.delete("/api/v1/students/9999", headers=school_header(admin_token, north_school_id))
-    assert delete_missing.status_code == 404
+    assert response.status_code == 404
 
-    delete_ok = client.delete(
-        f"/api/v1/students/{created_id}",
-        headers=school_header(admin_token, north_school_id),
+
+def test_delete_student_returns_204_for_admin(client, seeded_users, db_session):
+    """
+    Validate student delete success for admin.
+
+    1. Seed student and link to active school.
+    2. Call delete endpoint once.
+    3. Receive no-content response.
+    4. Validate status code is 204.
+    """
+    student = create_student(db_session, "Delete", "Target", "DEL-EP-001")
+    link_student_school(db_session, student.id, seeded_users["north_school"].id)
+    response = client.delete(
+        f"/api/v1/students/{student.id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
     )
-    assert delete_ok.status_code == 204
+    assert response.status_code == 204
+
+
+def test_delete_student_returns_404_for_missing_student(client, seeded_users):
+    """
+    Validate student delete missing branch.
+
+    1. Build admin school-scoped header.
+    2. Call delete endpoint with unknown id.
+    3. Receive not found response.
+    4. Validate missing students return 404.
+    """
+    response = client.delete(
+        "/api/v1/students/999999",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 404
+
+
+def test_associate_student_user_returns_201_for_admin(client, seeded_users, db_session):
+    """
+    Validate student-user association success.
+
+    1. Seed student linked to active school.
+    2. Call associate user endpoint once.
+    3. Receive created response.
+    4. Validate status code is 201.
+    """
+    student = create_student(db_session, "Assoc", "User", "AUS-001")
+    link_student_school(db_session, student.id, seeded_users["north_school"].id)
+    response = client.post(
+        f"/api/v1/students/{student.id}/users",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={"user_id": seeded_users["student"].id},
+    )
+    assert response.status_code == 201
+
+
+def test_associate_student_user_returns_404_for_missing_student(client, seeded_users):
+    """
+    Validate student-user association missing student branch.
+
+    1. Build admin school-scoped header.
+    2. Call associate user endpoint with unknown student id.
+    3. Receive not found response.
+    4. Validate missing student returns 404.
+    """
+    response = client.post(
+        "/api/v1/students/999999/users",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={"user_id": seeded_users["student"].id},
+    )
+    assert response.status_code == 404
+
+
+def test_deassociate_student_user_returns_204_for_admin(client, seeded_users, db_session):
+    """
+    Validate student-user deassociation success.
+
+    1. Seed student link with user in active school.
+    2. Call deassociate user endpoint once.
+    3. Receive no-content response.
+    4. Validate status code is 204.
+    """
+    student = create_student(db_session, "Deassoc", "User", "DAU-001")
+    link_student_school(db_session, student.id, seeded_users["north_school"].id)
+    link_user_student(db_session, seeded_users["student"].id, student.id)
+    response = client.delete(
+        f"/api/v1/students/{student.id}/users/{seeded_users['student'].id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 204
+
+
+def test_associate_student_school_returns_201_for_admin(client, seeded_users, db_session):
+    """
+    Validate student-school association success.
+
+    1. Seed student linked to north school.
+    2. Call association endpoint for south school.
+    3. Receive created response.
+    4. Validate status code is 201.
+    """
+    student = create_student(db_session, "Assoc", "School", "ASS-001")
+    link_student_school(db_session, student.id, seeded_users["north_school"].id)
+    response = client.post(
+        f"/api/v1/students/{student.id}/schools",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={"school_id": seeded_users["south_school"].id},
+    )
+    assert response.status_code == 201
+
+
+def test_associate_student_school_returns_409_for_duplicate_link(client, seeded_users, db_session):
+    """
+    Validate student-school association duplicate branch.
+
+    1. Seed student linked to active school.
+    2. Call association endpoint with same school id.
+    3. Receive conflict response.
+    4. Validate duplicate association is rejected.
+    """
+    student = create_student(db_session, "Dup", "School", "ASS-002")
+    link_student_school(db_session, student.id, seeded_users["north_school"].id)
+    response = client.post(
+        f"/api/v1/students/{student.id}/schools",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={"school_id": seeded_users["north_school"].id},
+    )
+    assert response.status_code == 409
+
+
+def test_deassociate_student_school_returns_204_for_admin(client, seeded_users, db_session):
+    """
+    Validate student-school deassociation success.
+
+    1. Seed student linked to active school.
+    2. Call deassociation endpoint once.
+    3. Receive no-content response.
+    4. Validate status code is 204.
+    """
+    student = create_student(db_session, "Deassoc", "School", "DAS-001")
+    link_student_school(db_session, student.id, seeded_users["north_school"].id)
+    response = client.delete(
+        f"/api/v1/students/{student.id}/schools/{seeded_users['north_school'].id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 204
