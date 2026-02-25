@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.application.services.security_service import hash_password
+from app.domain.roles import UserRole
 from app.infrastructure.db.models import User, UserProfile
 from app.interfaces.api.v1.schemas.user import UserCreate, UserUpdate
 
@@ -15,10 +16,6 @@ def get_user_by_email(db: Session, email: str) -> User | None:
     return db.execute(select(User).where(User.email == email)).scalar_one_or_none()
 
 
-def list_users(db: Session) -> list[User]:
-    return db.execute(select(User).order_by(User.id)).scalars().all()
-
-
 def create_user(db: Session, payload: UserCreate) -> User:
     existing_user = get_user_by_email(db=db, email=payload.email)
     if existing_user is not None:
@@ -27,7 +24,6 @@ def create_user(db: Session, payload: UserCreate) -> User:
     user = User(
         email=payload.email,
         hashed_password=hash_password(payload.password),
-        roles=[role.value for role in payload.roles],
         is_active=payload.is_active,
     )
     user.profile = UserProfile(
@@ -52,9 +48,6 @@ def update_user(db: Session, user: User, payload: UserUpdate) -> User:
     if payload.password is not None:
         user.hashed_password = hash_password(payload.password)
 
-    if payload.roles is not None:
-        user.roles = [role.value for role in payload.roles]
-
     if payload.is_active is not None:
         user.is_active = payload.is_active
 
@@ -76,3 +69,30 @@ def update_user(db: Session, user: User, payload: UserUpdate) -> User:
 def delete_user(db: Session, user: User) -> None:
     db.delete(user)
     db.commit()
+
+
+def get_user_school_roles(user: User) -> list[dict]:
+    grouped_roles: dict[int, dict] = {}
+    for membership in user.school_memberships:
+        school_id = membership.school_id
+        if school_id not in grouped_roles:
+            grouped_roles[school_id] = {
+                "school_id": school_id,
+                "school_name": membership.school.name,
+                "roles": [],
+            }
+        grouped_roles[school_id]["roles"].append(UserRole(membership.role))
+
+    return list(grouped_roles.values())
+
+
+def serialize_user_response(user: User) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "is_active": user.is_active,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+        "profile": user.profile,
+        "schools": get_user_school_roles(user),
+    }

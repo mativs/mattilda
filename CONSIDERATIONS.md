@@ -24,3 +24,7 @@ Before choosing an authorization model, the following scenarios were mapped:
 **Two enforcement layers on every endpoint:** role check (can this role access this resource type?) and ownership check (does this user own this specific resource?). Both live in the backend. Frontend adapts to the role for UX only.
 
 **No per-user granular permissions or read/write/create dimensions.** The added flexibility is not worth the configuration surface area at this stage. The model is structured to support that evolution if the business requires it.
+
+## Scope disclaimer
+
+Due to the scope and time constraints of this take-home project, a platform-level superadmin is intentionally not implemented. All authorization is school-scoped through memberships and per-school roles.

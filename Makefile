@@ -6,11 +6,12 @@ MIGRATE_ARGS ?=
 SEED_ARGS ?=
 LOGS_SERVICE ?=
 
-.PHONY: help init-env up down build restart ps logs test test-subset migrate seed shell clean
+.PHONY: help init-env check-uv up down build restart ps logs test test-subset migrate seed shell clean
 
 help:
 	@echo "Available targets:"
 	@echo "  make init-env          # Create .env from .env.example if needed"
+	@echo "  make check-uv          # Verify local uv is installed"
 	@echo "  make up                # Build and start stack in background"
 	@echo "  make down              # Stop stack"
 	@echo "  make build             # Build images"
@@ -27,6 +28,9 @@ help:
 
 init-env:
 	@if [ ! -f .env ]; then cp .env.example .env && echo "Created .env from .env.example"; else echo ".env already exists"; fi
+
+check-uv:
+	@command -v uv >/dev/null 2>&1 || { echo "uv is not installed. Install with: curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
 
 up:
 	$(COMPOSE) up --build -d
@@ -45,11 +49,11 @@ ps:
 logs:
 	$(COMPOSE) logs -f $(LOGS_SERVICE)
 
-test:
-	$(COMPOSE) run --rm $(BACKEND_SERVICE) uv run pytest $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
+test: check-uv
+	cd backend && uv run pytest $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
 
-test-subset:
-	$(COMPOSE) run --rm $(BACKEND_SERVICE) uv run pytest --override-ini addopts= $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
+test-subset: check-uv
+	cd backend && uv run pytest --override-ini addopts= $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
 
 migrate:
 	$(COMPOSE) run --rm $(BACKEND_SERVICE) uv run alembic upgrade head $(MIGRATE_ARGS)

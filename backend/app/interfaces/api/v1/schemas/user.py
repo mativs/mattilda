@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.domain.roles import UserRole
 
@@ -32,10 +32,15 @@ class UserProfileResponse(UserProfileBase):
     updated_at: datetime
 
 
+class UserSchoolRolesResponse(BaseModel):
+    school_id: int
+    school_name: str
+    roles: list[UserRole]
+
+
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
-    roles: list[UserRole]
     is_active: bool = True
     profile: UserProfileCreate
 
@@ -43,7 +48,6 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     email: EmailStr | None = None
     password: str | None = None
-    roles: list[UserRole] | None = None
     is_active: bool | None = None
     profile: UserProfileUpdate | None = None
 
@@ -53,8 +57,8 @@ class UserResponse(BaseModel):
 
     id: int
     email: EmailStr
-    roles: list[UserRole]
     is_active: bool
     created_at: datetime
     updated_at: datetime
     profile: UserProfileResponse
+    schools: list[UserSchoolRolesResponse] = Field(default_factory=list)

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:18000";
 const TOKEN_KEY = "mattilda_token";
+const SCHOOL_KEY = "mattilda_school_id";
 
 export default function App() {
   const [loadingPublic, setLoadingPublic] = useState(true);
@@ -9,9 +10,11 @@ export default function App() {
   const [error, setError] = useState("");
   const [payload, setPayload] = useState(null);
   const [me, setMe] = useState(null);
+  const [activeSchool, setActiveSchool] = useState(null);
   const [username, setUsername] = useState("admin@example.com");
   const [password, setPassword] = useState("admin123");
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
+  const [selectedSchoolId, setSelectedSchoolId] = useState(() => localStorage.getItem(SCHOOL_KEY) ?? "");
 
   useEffect(() => {
     async function load() {
@@ -33,11 +36,18 @@ export default function App() {
   }, []);
 
   const isAuthenticated = useMemo(() => Boolean(token), [token]);
+  const selectedSchool = useMemo(() => {
+    if (!me || !selectedSchoolId) {
+      return null;
+    }
+    return me.schools.find((school) => String(school.school_id) === String(selectedSchoolId)) ?? null;
+  }, [me, selectedSchoolId]);
 
   useEffect(() => {
     async function loadMe() {
       if (!token) {
         setMe(null);
+        setActiveSchool(null);
         return;
       }
       setLoadingAuth(true);
@@ -50,11 +60,27 @@ export default function App() {
         if (!response.ok) {
           throw new Error("Session expired or invalid token");
         }
-        setMe(await response.json());
+        const mePayload = await response.json();
+        setMe(mePayload);
+        if (mePayload.schools.length === 0) {
+          setSelectedSchoolId("");
+          localStorage.removeItem(SCHOOL_KEY);
+          return;
+        }
+        const selectedExists = mePayload.schools.some(
+          (school) => String(school.school_id) === String(selectedSchoolId)
+        );
+        if (!selectedExists) {
+          const defaultSchoolId = String(mePayload.schools[0].school_id);
+          setSelectedSchoolId(defaultSchoolId);
+          localStorage.setItem(SCHOOL_KEY, defaultSchoolId);
+        }
       } catch (err) {
         setError(err.message);
         localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(SCHOOL_KEY);
         setToken("");
+        setSelectedSchoolId("");
       } finally {
         setLoadingAuth(false);
       }
@@ -62,6 +88,32 @@ export default function App() {
 
     loadMe();
   }, [token]);
+
+  useEffect(() => {
+    async function loadActiveSchool() {
+      if (!token || !selectedSchoolId) {
+        setActiveSchool(null);
+        return;
+      }
+      try {
+        const response = await fetch(`${API_URL}/api/v1/schools/${selectedSchoolId}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-School-Id": String(selectedSchoolId)
+          }
+        });
+        if (!response.ok) {
+          throw new Error("Unable to load selected school");
+        }
+        setActiveSchool(await response.json());
+      } catch (err) {
+        setError(err.message);
+        setActiveSchool(null);
+      }
+    }
+
+    loadActiveSchool();
+  }, [token, selectedSchoolId]);
 
   async function onLogin(event) {
     event.preventDefault();
@@ -92,8 +144,21 @@ export default function App() {
 
   function onLogout() {
     localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(SCHOOL_KEY);
     setToken("");
+    setSelectedSchoolId("");
     setMe(null);
+    setActiveSchool(null);
+  }
+
+  function onSchoolChange(event) {
+    const nextSchoolId = event.target.value;
+    setSelectedSchoolId(nextSchoolId);
+    if (nextSchoolId) {
+      localStorage.setItem(SCHOOL_KEY, nextSchoolId);
+      return;
+    }
+    localStorage.removeItem(SCHOOL_KEY);
   }
 
   return (
@@ -143,11 +208,32 @@ export default function App() {
                 <strong>User:</strong> {me.email}
               </p>
               <p>
-                <strong>Roles:</strong> {me.roles.join(", ")}
-              </p>
-              <p>
                 <strong>Name:</strong> {me.profile.first_name} {me.profile.last_name}
               </p>
+              {me.schools.length > 0 && (
+                <>
+                  <label>
+                    Active School
+                    <select value={selectedSchoolId} onChange={onSchoolChange}>
+                      {me.schools.map((school) => (
+                        <option key={school.school_id} value={school.school_id}>
+                          {school.school_name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {selectedSchool && (
+                    <p>
+                      <strong>Roles in school:</strong> {selectedSchool.roles.join(", ")}
+                    </p>
+                  )}
+                  {activeSchool && (
+                    <p>
+                      <strong>Selected school:</strong> {activeSchool.name}
+                    </p>
+                  )}
+                </>
+              )}
             </>
           )}
           <button onClick={onLogout} type="button">
