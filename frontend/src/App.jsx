@@ -7,6 +7,7 @@ const SCHOOL_KEY = "mattilda_school_id";
 
 const DEFAULT_LIMIT = 10;
 const USER_ROLE_OPTIONS = ["admin", "director", "teacher", "student", "parent"];
+const FEE_RECURRENCE_OPTIONS = ["monthly", "annual", "one_time"];
 
 function usePublicHealth() {
   const [loading, setLoading] = useState(true);
@@ -1330,6 +1331,219 @@ function SchoolsConfigPage({ request, selectedSchoolId }) {
   );
 }
 
+function FeesConfigPage({ request, selectedSchoolId }) {
+  const [rows, setRows] = useState([]);
+  const [pagination, setPagination] = useState(null);
+  const [search, setSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editFee, setEditFee] = useState(null);
+  const [deleteFee, setDeleteFee] = useState(null);
+  const [createForm, setCreateForm] = useState({ name: "", amount: "", recurrence: "monthly", is_active: "true" });
+  const [editForm, setEditForm] = useState({ name: "", amount: "", recurrence: "monthly", is_active: "true" });
+
+  async function loadFees() {
+    if (!selectedSchoolId) {
+      return;
+    }
+    try {
+      const query = new URLSearchParams({ offset: String(offset), limit: String(DEFAULT_LIMIT) });
+      if (search.trim()) {
+        query.set("search", search.trim());
+      }
+      const payload = await request(`/api/v1/fees?${query.toString()}`);
+      setRows(payload.items ?? []);
+      setPagination(payload.pagination ?? null);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    setOffset(0);
+  }, [search, selectedSchoolId]);
+
+  useEffect(() => {
+    loadFees();
+  }, [offset, selectedSchoolId, search]);
+
+  function openEdit(fee) {
+    setEditFee(fee);
+    setEditForm({
+      name: fee.name ?? "",
+      amount: fee.amount != null ? String(fee.amount) : "",
+      recurrence: fee.recurrence ?? "monthly",
+      is_active: String(fee.is_active ?? true),
+    });
+  }
+
+  return (
+    <section className="page-card">
+      <SectionTitle>Fees</SectionTitle>
+      {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
+      <TableToolbar
+        search={search}
+        onSearch={setSearch}
+        onCreate={() => {
+          setError("");
+          setCreateOpen(true);
+        }}
+      />
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Amount</th>
+            <th>Recurrence</th>
+            <th>Active</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>{row.id}</td>
+              <td>{row.name}</td>
+              <td>{row.amount}</td>
+              <td>{row.recurrence}</td>
+              <td>{row.is_active ? "yes" : "no"}</td>
+              <td className="row-actions">
+                <button className="ghost" onClick={() => openEdit(row)} type="button">
+                  Edit
+                </button>
+                <button className="danger" onClick={() => setDeleteFee(row)} type="button">
+                  Delete
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <PaginationControls pagination={pagination} onChange={setOffset} />
+
+      {createOpen && (
+        <Modal
+          title="Create fee"
+          onClose={() => setCreateOpen(false)}
+          onSubmit={async () => {
+            try {
+              await request("/api/v1/fees", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  name: createForm.name,
+                  amount: createForm.amount,
+                  recurrence: createForm.recurrence,
+                  is_active: createForm.is_active === "true",
+                }),
+              });
+              setCreateOpen(false);
+              setCreateForm({ name: "", amount: "", recurrence: "monthly", is_active: "true" });
+              setMessage("Fee created");
+              await loadFees();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Create"
+        >
+          <input placeholder="Name" value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} />
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Amount"
+            value={createForm.amount}
+            onChange={(e) => setCreateForm({ ...createForm, amount: e.target.value })}
+          />
+          <select value={createForm.recurrence} onChange={(e) => setCreateForm({ ...createForm, recurrence: e.target.value })}>
+            {FEE_RECURRENCE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <select value={createForm.is_active} onChange={(e) => setCreateForm({ ...createForm, is_active: e.target.value })}>
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+        </Modal>
+      )}
+
+      {editFee && (
+        <Modal
+          title={`Edit fee #${editFee.id}`}
+          onClose={() => setEditFee(null)}
+          onSubmit={async () => {
+            try {
+              await request(`/api/v1/fees/${editFee.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  name: editForm.name || undefined,
+                  amount: editForm.amount || undefined,
+                  recurrence: editForm.recurrence || undefined,
+                  is_active: editForm.is_active === "true",
+                }),
+              });
+              setEditFee(null);
+              setMessage("Fee updated");
+              await loadFees();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Update"
+        >
+          <input placeholder="Name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Amount"
+            value={editForm.amount}
+            onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
+          />
+          <select value={editForm.recurrence} onChange={(e) => setEditForm({ ...editForm, recurrence: e.target.value })}>
+            {FEE_RECURRENCE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <select value={editForm.is_active} onChange={(e) => setEditForm({ ...editForm, is_active: e.target.value })}>
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+        </Modal>
+      )}
+
+      {deleteFee && (
+        <Modal
+          danger
+          title={`Delete fee #${deleteFee.id}?`}
+          onClose={() => setDeleteFee(null)}
+          onSubmit={async () => {
+            try {
+              await request(`/api/v1/fees/${deleteFee.id}`, { method: "DELETE" });
+              setDeleteFee(null);
+              setMessage("Fee deleted");
+              await loadFees();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Delete"
+        >
+          <p>This action cannot be undone.</p>
+        </Modal>
+      )}
+    </section>
+  );
+}
+
 function Sidebar({ isSchoolAdmin, myStudents, selectedSchoolId }) {
   return (
     <aside className="sidebar">
@@ -1343,6 +1557,7 @@ function Sidebar({ isSchoolAdmin, myStudents, selectedSchoolId }) {
             <NavLink to="/config/users">Users</NavLink>
             <NavLink to="/config/students">Students</NavLink>
             <NavLink to="/config/schools">Schools</NavLink>
+            <NavLink to="/config/fees">Fees</NavLink>
           </div>
         )}
 
@@ -1436,6 +1651,10 @@ function AppLayout({
           <Route
             path="/config/schools"
             element={isSchoolAdmin ? <SchoolsConfigPage request={request} selectedSchoolId={selectedSchoolId} /> : <Navigate replace to="/dashboard" />}
+          />
+          <Route
+            path="/config/fees"
+            element={isSchoolAdmin ? <FeesConfigPage request={request} selectedSchoolId={selectedSchoolId} /> : <Navigate replace to="/dashboard" />}
           />
           <Route path="*" element={<Navigate replace to="/dashboard" />} />
         </Routes>

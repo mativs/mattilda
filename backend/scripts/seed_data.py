@@ -1,9 +1,12 @@
+from decimal import Decimal
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.application.services.security_service import hash_password
+from app.domain.fee_recurrence import FeeRecurrence
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
+from app.infrastructure.db.models import FeeDefinition, School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
 from app.infrastructure.db.session import SessionLocal
 
 
@@ -76,6 +79,37 @@ def associate_user_student_if_missing(db: Session, user_id: int, student_id: int
     db.add(UserStudent(user_id=user_id, student_id=student_id))
 
 
+def create_fee_if_missing(
+    db: Session,
+    *,
+    school_id: int,
+    name: str,
+    amount: Decimal,
+    recurrence: FeeRecurrence,
+    is_active: bool = True,
+) -> FeeDefinition:
+    existing = db.execute(
+        select(FeeDefinition).where(
+            FeeDefinition.school_id == school_id,
+            FeeDefinition.name == name,
+            FeeDefinition.recurrence == recurrence,
+            FeeDefinition.deleted_at.is_(None),
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    fee = FeeDefinition(
+        school_id=school_id,
+        name=name,
+        amount=amount,
+        recurrence=recurrence,
+        is_active=is_active,
+    )
+    db.add(fee)
+    db.flush()
+    return fee
+
+
 def main() -> None:
     db = SessionLocal()
     try:
@@ -116,6 +150,28 @@ def main() -> None:
         associate_user_student_if_missing(db=db, user_id=student.id, student_id=child_one.id)
         associate_user_student_if_missing(db=db, user_id=student.id, student_id=child_two.id)
         associate_user_student_if_missing(db=db, user_id=teacher.id, student_id=child_two.id)
+
+        create_fee_if_missing(
+            db=db,
+            school_id=north_school.id,
+            name="Cuota mensual",
+            amount=Decimal("150.00"),
+            recurrence=FeeRecurrence.monthly,
+        )
+        create_fee_if_missing(
+            db=db,
+            school_id=north_school.id,
+            name="Matrícula",
+            amount=Decimal("450.00"),
+            recurrence=FeeRecurrence.annual,
+        )
+        create_fee_if_missing(
+            db=db,
+            school_id=south_school.id,
+            name="Materiales",
+            amount=Decimal("95.00"),
+            recurrence=FeeRecurrence.one_time,
+        )
 
         db.commit()
     finally:

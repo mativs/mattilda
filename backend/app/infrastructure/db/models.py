@@ -1,8 +1,10 @@
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.domain.fee_recurrence import FeeRecurrence
 from app.infrastructure.db.session import Base
 
 
@@ -65,6 +67,11 @@ class School(SoftDeleteMixin, TimestampMixin, Base):
     )
     student_links: Mapped[list["StudentSchool"]] = relationship(
         "StudentSchool",
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )
+    fee_definitions: Mapped[list["FeeDefinition"]] = relationship(
+        "FeeDefinition",
         back_populates="school",
         cascade="all, delete-orphan",
     )
@@ -146,3 +153,15 @@ class DummyRecord(TenantScopedMixin, TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     school: Mapped[School] = relationship("School", back_populates="dummy_records")
+
+
+class FeeDefinition(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
+    __tablename__ = "fee_definitions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    recurrence: Mapped[FeeRecurrence] = mapped_column(Enum(FeeRecurrence, name="fee_recurrence"), nullable=False, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    school: Mapped[School] = relationship("School", back_populates="fee_definitions")

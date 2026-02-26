@@ -149,6 +149,25 @@ make quality
 
 Frontend admin association actions for user-school and student-school use the active school session (`X-School-Id`) as context.
 
+## Fee definition endpoints
+
+- `GET /api/v1/fees` (admin only, active school-scoped, paginated envelope)
+- `POST /api/v1/fees` (admin only, creates fee definition for active school)
+- `GET /api/v1/fees/{fee_id}` (admin only, `404` if not visible in active school)
+- `PUT /api/v1/fees/{fee_id}` (admin only, updates active-school fee definition)
+- `DELETE /api/v1/fees/{fee_id}` (admin only, soft delete)
+
+`POST /api/v1/fees` payload example:
+
+```json
+{
+  "name": "Cuota mensual",
+  "amount": "150.00",
+  "recurrence": "monthly",
+  "is_active": true
+}
+```
+
 ### Partial association sync payloads
 
 `PUT /api/v1/users/{user_id}` can include:
@@ -178,12 +197,12 @@ Frontend admin association actions for user-school and student-school use the ac
 - Default route after login: `/dashboard`.
 - Sidebar sections:
   - `Dashboard`
-  - `Configuration` (admin only): `Users`, `Students`, `Schools`
+  - `Configuration` (admin only): `Users`, `Students`, `Schools`, `Fees`
   - `Students` (one submenu item per student associated with current user in active school)
 - Top-right area includes:
   - school selector (switches active `X-School-Id` context)
   - avatar shortcut to `/profile`
-- Configuration lists (`users`, `students`, `schools`) support:
+- Configuration lists (`users`, `students`, `schools`, `fees`) support:
   - server-side search and pagination (`offset`, `limit`, `search`)
   - create/edit modals
   - row delete actions with confirmation
@@ -218,5 +237,6 @@ And also creates:
 - `north-high` and `south-high` schools
 - Per-school memberships and roles for seeded users
 - Sample students linked to users and schools
+- Sample fee definitions per school
 
 Use the frontend login form at `http://localhost:13000` to verify authenticated session and the dummy home page.
