@@ -1,12 +1,14 @@
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.application.services.security_service import hash_password
+from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.fee_recurrence import FeeRecurrence
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import FeeDefinition, School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
+from app.infrastructure.db.models import Charge, FeeDefinition, School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
 from app.infrastructure.db.session import SessionLocal
 
 
@@ -110,6 +112,47 @@ def create_fee_if_missing(
     return fee
 
 
+def create_charge_if_missing(
+    db: Session,
+    *,
+    school_id: int,
+    student_id: int,
+    fee_definition_id: int | None,
+    description: str,
+    amount: Decimal,
+    period: str | None,
+    due_date: date,
+    charge_type: ChargeType,
+    status: ChargeStatus,
+) -> Charge:
+    existing = db.execute(
+        select(Charge).where(
+            Charge.school_id == school_id,
+            Charge.student_id == student_id,
+            Charge.description == description,
+            Charge.due_date == due_date,
+            Charge.charge_type == charge_type,
+            Charge.deleted_at.is_(None),
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    charge = Charge(
+        school_id=school_id,
+        student_id=student_id,
+        fee_definition_id=fee_definition_id,
+        description=description,
+        amount=amount,
+        period=period,
+        due_date=due_date,
+        charge_type=charge_type,
+        status=status,
+    )
+    db.add(charge)
+    db.flush()
+    return charge
+
+
 def main() -> None:
     db = SessionLocal()
     try:
@@ -151,26 +194,62 @@ def main() -> None:
         associate_user_student_if_missing(db=db, user_id=student.id, student_id=child_two.id)
         associate_user_student_if_missing(db=db, user_id=teacher.id, student_id=child_two.id)
 
-        create_fee_if_missing(
+        monthly_fee = create_fee_if_missing(
             db=db,
             school_id=north_school.id,
             name="Cuota mensual",
             amount=Decimal("150.00"),
             recurrence=FeeRecurrence.monthly,
         )
-        create_fee_if_missing(
+        annual_fee = create_fee_if_missing(
             db=db,
             school_id=north_school.id,
             name="Matrícula",
             amount=Decimal("450.00"),
             recurrence=FeeRecurrence.annual,
         )
-        create_fee_if_missing(
+        materials_fee = create_fee_if_missing(
             db=db,
             school_id=south_school.id,
             name="Materiales",
             amount=Decimal("95.00"),
             recurrence=FeeRecurrence.one_time,
+        )
+        create_charge_if_missing(
+            db=db,
+            school_id=north_school.id,
+            student_id=child_one.id,
+            fee_definition_id=monthly_fee.id,
+            description="Cuota mensual marzo",
+            amount=Decimal("150.00"),
+            period="2026-03",
+            due_date=date(2026, 3, 10),
+            charge_type=ChargeType.fee,
+            status=ChargeStatus.unbilled,
+        )
+        create_charge_if_missing(
+            db=db,
+            school_id=north_school.id,
+            student_id=child_two.id,
+            fee_definition_id=annual_fee.id,
+            description="Matrícula 2026",
+            amount=Decimal("450.00"),
+            period="2026",
+            due_date=date(2026, 3, 5),
+            charge_type=ChargeType.fee,
+            status=ChargeStatus.billed,
+        )
+        create_charge_if_missing(
+            db=db,
+            school_id=south_school.id,
+            student_id=child_two.id,
+            fee_definition_id=materials_fee.id,
+            description="Materiales",
+            amount=Decimal("95.00"),
+            period=None,
+            due_date=date(2026, 3, 12),
+            charge_type=ChargeType.fee,
+            status=ChargeStatus.unbilled,
         )
 
         db.commit()

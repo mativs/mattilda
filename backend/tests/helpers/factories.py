@@ -1,8 +1,12 @@
+from datetime import date
+from decimal import Decimal
+
 from sqlalchemy.orm import Session
 
 from app.application.services.security_service import hash_password
+from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
+from app.infrastructure.db.models import Charge, School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
 
 
 def create_user(db: Session, email: str, password: str = "pass123", is_active: bool = True) -> User:
@@ -52,3 +56,33 @@ def link_user_student(db: Session, user_id: int, student_id: int) -> UserStudent
     db.commit()
     db.refresh(link)
     return link
+
+
+def create_charge(
+    db: Session,
+    *,
+    school_id: int,
+    student_id: int,
+    description: str,
+    amount: str,
+    due_date: date,
+    charge_type: ChargeType = ChargeType.fee,
+    status: ChargeStatus = ChargeStatus.unbilled,
+    period: str | None = None,
+    fee_definition_id: int | None = None,
+) -> Charge:
+    charge = Charge(
+        school_id=school_id,
+        student_id=student_id,
+        fee_definition_id=fee_definition_id,
+        description=description,
+        amount=Decimal(amount),
+        period=period,
+        due_date=due_date,
+        charge_type=charge_type,
+        status=status,
+    )
+    db.add(charge)
+    db.commit()
+    db.refresh(charge)
+    return charge

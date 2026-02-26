@@ -168,6 +168,30 @@ Frontend admin association actions for user-school and student-school use the ac
 }
 ```
 
+## Charge endpoints
+
+- `GET /api/v1/charges` (admin only, active school-scoped, paginated envelope)
+- `POST /api/v1/charges` (admin only, creates charge for active school and valid student)
+- `GET /api/v1/charges/{charge_id}` (admin only, `404` if not visible in active school)
+- `PUT /api/v1/charges/{charge_id}` (admin only, updates active-school charge)
+- `DELETE /api/v1/charges/{charge_id}` (admin only, soft delete + status `cancelled`)
+- `GET /api/v1/students/{student_id}/charges/unbilled` (admin only; returns unbilled items and `total_unbilled_amount`)
+
+`POST /api/v1/charges` payload example:
+
+```json
+{
+  "student_id": 1,
+  "fee_definition_id": null,
+  "description": "Cuota mensual marzo",
+  "amount": "150.00",
+  "period": "2026-03",
+  "due_date": "2026-03-10",
+  "charge_type": "fee",
+  "status": "unbilled"
+}
+```
+
 ### Partial association sync payloads
 
 `PUT /api/v1/users/{user_id}` can include:
@@ -197,12 +221,12 @@ Frontend admin association actions for user-school and student-school use the ac
 - Default route after login: `/dashboard`.
 - Sidebar sections:
   - `Dashboard`
-  - `Configuration` (admin only): `Users`, `Students`, `Schools`, `Fees`
+  - `Configuration` (admin only): `Users`, `Students`, `Schools`, `Fees`, `Charges`
   - `Students` (one submenu item per student associated with current user in active school)
 - Top-right area includes:
   - school selector (switches active `X-School-Id` context)
   - avatar shortcut to `/profile`
-- Configuration lists (`users`, `students`, `schools`, `fees`) support:
+- Configuration lists (`users`, `students`, `schools`, `fees`, `charges`) support:
   - server-side search and pagination (`offset`, `limit`, `search`)
   - create/edit modals
   - row delete actions with confirmation
@@ -238,5 +262,6 @@ And also creates:
 - Per-school memberships and roles for seeded users
 - Sample students linked to users and schools
 - Sample fee definitions per school
+- Sample charges per school/student
 
 Use the frontend login form at `http://localhost:13000` to verify authenticated session and the dummy home page.

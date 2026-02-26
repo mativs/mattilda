@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.fee_recurrence import FeeRecurrence
 from app.infrastructure.db.session import Base
 
@@ -75,6 +76,11 @@ class School(SoftDeleteMixin, TimestampMixin, Base):
         back_populates="school",
         cascade="all, delete-orphan",
     )
+    charges: Mapped[list["Charge"]] = relationship(
+        "Charge",
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )
 
 
 class UserSchoolRole(TimestampMixin, Base):
@@ -118,6 +124,11 @@ class Student(SoftDeleteMixin, TimestampMixin, Base):
     )
     school_links: Mapped[list["StudentSchool"]] = relationship(
         "StudentSchool",
+        back_populates="student",
+        cascade="all, delete-orphan",
+    )
+    charges: Mapped[list["Charge"]] = relationship(
+        "Charge",
         back_populates="student",
         cascade="all, delete-orphan",
     )
@@ -165,3 +176,31 @@ class FeeDefinition(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     school: Mapped[School] = relationship("School", back_populates="fee_definitions")
+    charges: Mapped[list["Charge"]] = relationship("Charge", back_populates="fee_definition")
+
+
+class Charge(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
+    __tablename__ = "charges"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    fee_definition_id: Mapped[int | None] = mapped_column(
+        ForeignKey("fee_definitions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    period: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    charge_type: Mapped[ChargeType] = mapped_column(Enum(ChargeType, name="charge_type"), nullable=False, index=True)
+    status: Mapped[ChargeStatus] = mapped_column(
+        Enum(ChargeStatus, name="charge_status"),
+        nullable=False,
+        default=ChargeStatus.unbilled,
+        index=True,
+    )
+
+    school: Mapped[School] = relationship("School", back_populates="charges")
+    student: Mapped[Student] = relationship("Student", back_populates="charges")
+    fee_definition: Mapped[FeeDefinition | None] = relationship("FeeDefinition", back_populates="charges")

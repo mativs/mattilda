@@ -8,6 +8,8 @@ const SCHOOL_KEY = "mattilda_school_id";
 const DEFAULT_LIMIT = 10;
 const USER_ROLE_OPTIONS = ["admin", "director", "teacher", "student", "parent"];
 const FEE_RECURRENCE_OPTIONS = ["monthly", "annual", "one_time"];
+const CHARGE_TYPE_OPTIONS = ["fee", "interest", "penalty", "balance_forward"];
+const CHARGE_STATUS_OPTIONS = ["unbilled", "billed", "cancelled"];
 
 function usePublicHealth() {
   const [loading, setLoading] = useState(true);
@@ -144,9 +146,10 @@ function ProfilePage({ me, selectedSchool }) {
   );
 }
 
-function StudentDetailPage({ selectedSchoolId, request }) {
+function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
   const { studentId } = useParams();
   const [student, setStudent] = useState(null);
+  const [unbilled, setUnbilled] = useState({ items: [], total_unbilled_amount: "0.00" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -158,17 +161,31 @@ function StudentDetailPage({ selectedSchoolId, request }) {
       setLoading(true);
       setError("");
       try {
-        const payload = await request(`/api/v1/students/${studentId}`);
+        const requests = [request(`/api/v1/students/${studentId}`)];
+        if (isSchoolAdmin) {
+          requests.push(request(`/api/v1/students/${studentId}/charges/unbilled`));
+        }
+        const [studentPayload, unbilledPayload] = await Promise.all(requests);
+        const payload = studentPayload;
         setStudent(payload);
+        if (isSchoolAdmin && unbilledPayload) {
+          setUnbilled({
+            items: unbilledPayload.items ?? [],
+            total_unbilled_amount: unbilledPayload.total_unbilled_amount ?? "0.00",
+          });
+        } else {
+          setUnbilled({ items: [], total_unbilled_amount: "0.00" });
+        }
       } catch (err) {
         setError(err.message);
         setStudent(null);
+        setUnbilled({ items: [], total_unbilled_amount: "0.00" });
       } finally {
         setLoading(false);
       }
     }
     loadStudent();
-  }, [selectedSchoolId, studentId, request]);
+  }, [selectedSchoolId, studentId, request, isSchoolAdmin]);
 
   return (
     <section className="page-card">
@@ -176,9 +193,38 @@ function StudentDetailPage({ selectedSchoolId, request }) {
       {loading && <p className="muted">Loading student...</p>}
       {error && <p className="error">{error}</p>}
       {student && (
-        <p>
-          {student.first_name} {student.last_name}
-        </p>
+        <>
+          <p>
+            {student.first_name} {student.last_name}
+          </p>
+          {isSchoolAdmin && (
+            <div className="association-box">
+              <p className="muted">Unbilled charges total: {unbilled.total_unbilled_amount}</p>
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Description</th>
+                    <th>Amount</th>
+                    <th>Due date</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unbilled.items.map((charge) => (
+                    <tr key={charge.id}>
+                      <td>{charge.id}</td>
+                      <td>{charge.description}</td>
+                      <td>{charge.amount}</td>
+                      <td>{charge.due_date}</td>
+                      <td>{charge.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </section>
   );
@@ -1544,6 +1590,328 @@ function FeesConfigPage({ request, selectedSchoolId }) {
   );
 }
 
+function ChargesConfigPage({ request, selectedSchoolId }) {
+  const [rows, setRows] = useState([]);
+  const [pagination, setPagination] = useState(null);
+  const [search, setSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editCharge, setEditCharge] = useState(null);
+  const [deleteCharge, setDeleteCharge] = useState(null);
+  const [studentOptions, setStudentOptions] = useState([]);
+  const [feeOptions, setFeeOptions] = useState([]);
+  const [createForm, setCreateForm] = useState({
+    student_id: "",
+    fee_definition_id: "",
+    description: "",
+    amount: "",
+    period: "",
+    due_date: "",
+    charge_type: "fee",
+    status: "unbilled",
+  });
+  const [editForm, setEditForm] = useState({
+    student_id: "",
+    fee_definition_id: "",
+    description: "",
+    amount: "",
+    period: "",
+    due_date: "",
+    charge_type: "fee",
+    status: "unbilled",
+  });
+
+  async function loadCharges() {
+    if (!selectedSchoolId) {
+      return;
+    }
+    try {
+      const query = new URLSearchParams({ offset: String(offset), limit: String(DEFAULT_LIMIT) });
+      if (search.trim()) {
+        query.set("search", search.trim());
+      }
+      const payload = await request(`/api/v1/charges?${query.toString()}`);
+      setRows(payload.items ?? []);
+      setPagination(payload.pagination ?? null);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function loadAssociationOptions() {
+    if (!selectedSchoolId) {
+      return;
+    }
+    try {
+      const [studentsPayload, feesPayload] = await Promise.all([
+        request("/api/v1/students?offset=0&limit=100"),
+        request("/api/v1/fees?offset=0&limit=100"),
+      ]);
+      setStudentOptions(studentsPayload.items ?? []);
+      setFeeOptions(feesPayload.items ?? []);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    setOffset(0);
+  }, [search, selectedSchoolId]);
+
+  useEffect(() => {
+    loadAssociationOptions();
+  }, [selectedSchoolId]);
+
+  useEffect(() => {
+    loadCharges();
+  }, [offset, selectedSchoolId, search]);
+
+  function openEdit(charge) {
+    setEditCharge(charge);
+    setEditForm({
+      student_id: charge.student_id != null ? String(charge.student_id) : "",
+      fee_definition_id: charge.fee_definition_id != null ? String(charge.fee_definition_id) : "",
+      description: charge.description ?? "",
+      amount: charge.amount != null ? String(charge.amount) : "",
+      period: charge.period ?? "",
+      due_date: charge.due_date ?? "",
+      charge_type: charge.charge_type ?? "fee",
+      status: charge.status ?? "unbilled",
+    });
+  }
+
+  function studentLabel(student) {
+    return `${student.first_name} ${student.last_name}`.trim();
+  }
+
+  return (
+    <section className="page-card">
+      <SectionTitle>Charges</SectionTitle>
+      {error && <p className="error">{error}</p>}
+      {message && <p className="success">{message}</p>}
+      <TableToolbar
+        search={search}
+        onSearch={setSearch}
+        onCreate={() => {
+          setError("");
+          setCreateOpen(true);
+        }}
+      />
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Student</th>
+            <th>Description</th>
+            <th>Amount</th>
+            <th>Due date</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>{row.id}</td>
+              <td>{row.student ? `${row.student.first_name} ${row.student.last_name}` : `Student #${row.student_id}`}</td>
+              <td>{row.description}</td>
+              <td>{row.amount}</td>
+              <td>{row.due_date}</td>
+              <td>{row.charge_type}</td>
+              <td>{row.status}</td>
+              <td className="row-actions">
+                <button className="ghost" onClick={() => openEdit(row)} type="button">
+                  Edit
+                </button>
+                <button className="danger" onClick={() => setDeleteCharge(row)} type="button">
+                  Delete
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <PaginationControls pagination={pagination} onChange={setOffset} />
+
+      {createOpen && (
+        <Modal
+          title="Create charge"
+          onClose={() => setCreateOpen(false)}
+          onSubmit={async () => {
+            try {
+              await request("/api/v1/charges", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  student_id: Number(createForm.student_id),
+                  fee_definition_id: createForm.fee_definition_id ? Number(createForm.fee_definition_id) : null,
+                  description: createForm.description,
+                  amount: createForm.amount,
+                  period: createForm.period || null,
+                  due_date: createForm.due_date,
+                  charge_type: createForm.charge_type,
+                  status: createForm.status,
+                }),
+              });
+              setCreateOpen(false);
+              setCreateForm({
+                student_id: "",
+                fee_definition_id: "",
+                description: "",
+                amount: "",
+                period: "",
+                due_date: "",
+                charge_type: "fee",
+                status: "unbilled",
+              });
+              setMessage("Charge created");
+              await loadCharges();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Create"
+        >
+          <select value={createForm.student_id} onChange={(e) => setCreateForm({ ...createForm, student_id: e.target.value })}>
+            <option value="">Select student</option>
+            {studentOptions.map((student) => (
+              <option key={student.id} value={student.id}>
+                {studentLabel(student)}
+              </option>
+            ))}
+          </select>
+          <select value={createForm.fee_definition_id} onChange={(e) => setCreateForm({ ...createForm, fee_definition_id: e.target.value })}>
+            <option value="">No fee definition</option>
+            {feeOptions.map((fee) => (
+              <option key={fee.id} value={fee.id}>
+                {fee.name}
+              </option>
+            ))}
+          </select>
+          <input
+            placeholder="Description"
+            value={createForm.description}
+            onChange={(e) => setCreateForm({ ...createForm, description: e.target.value })}
+          />
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Amount"
+            value={createForm.amount}
+            onChange={(e) => setCreateForm({ ...createForm, amount: e.target.value })}
+          />
+          <input placeholder="Period (YYYY-MM)" value={createForm.period} onChange={(e) => setCreateForm({ ...createForm, period: e.target.value })} />
+          <input type="date" value={createForm.due_date} onChange={(e) => setCreateForm({ ...createForm, due_date: e.target.value })} />
+          <select value={createForm.charge_type} onChange={(e) => setCreateForm({ ...createForm, charge_type: e.target.value })}>
+            {CHARGE_TYPE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <select value={createForm.status} onChange={(e) => setCreateForm({ ...createForm, status: e.target.value })}>
+            {CHARGE_STATUS_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </Modal>
+      )}
+
+      {editCharge && (
+        <Modal
+          title={`Edit charge #${editCharge.id}`}
+          onClose={() => setEditCharge(null)}
+          onSubmit={async () => {
+            try {
+              await request(`/api/v1/charges/${editCharge.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  student_id: editForm.student_id ? Number(editForm.student_id) : undefined,
+                  fee_definition_id: editForm.fee_definition_id ? Number(editForm.fee_definition_id) : null,
+                  description: editForm.description || undefined,
+                  amount: editForm.amount || undefined,
+                  period: editForm.period || null,
+                  due_date: editForm.due_date || undefined,
+                  charge_type: editForm.charge_type || undefined,
+                  status: editForm.status || undefined,
+                }),
+              });
+              setEditCharge(null);
+              setMessage("Charge updated");
+              await loadCharges();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Update"
+        >
+          <select value={editForm.student_id} onChange={(e) => setEditForm({ ...editForm, student_id: e.target.value })}>
+            <option value="">Select student</option>
+            {studentOptions.map((student) => (
+              <option key={student.id} value={student.id}>
+                {studentLabel(student)}
+              </option>
+            ))}
+          </select>
+          <select value={editForm.fee_definition_id} onChange={(e) => setEditForm({ ...editForm, fee_definition_id: e.target.value })}>
+            <option value="">No fee definition</option>
+            {feeOptions.map((fee) => (
+              <option key={fee.id} value={fee.id}>
+                {fee.name}
+              </option>
+            ))}
+          </select>
+          <input placeholder="Description" value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
+          <input type="number" step="0.01" placeholder="Amount" value={editForm.amount} onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })} />
+          <input placeholder="Period (YYYY-MM)" value={editForm.period} onChange={(e) => setEditForm({ ...editForm, period: e.target.value })} />
+          <input type="date" value={editForm.due_date} onChange={(e) => setEditForm({ ...editForm, due_date: e.target.value })} />
+          <select value={editForm.charge_type} onChange={(e) => setEditForm({ ...editForm, charge_type: e.target.value })}>
+            {CHARGE_TYPE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <select value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}>
+            {CHARGE_STATUS_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </Modal>
+      )}
+
+      {deleteCharge && (
+        <Modal
+          danger
+          title={`Delete charge #${deleteCharge.id}?`}
+          onClose={() => setDeleteCharge(null)}
+          onSubmit={async () => {
+            try {
+              await request(`/api/v1/charges/${deleteCharge.id}`, { method: "DELETE" });
+              setDeleteCharge(null);
+              setMessage("Charge deleted");
+              await loadCharges();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Delete"
+        >
+          <p>This action cannot be undone.</p>
+        </Modal>
+      )}
+    </section>
+  );
+}
+
 function Sidebar({ isSchoolAdmin, myStudents, selectedSchoolId }) {
   return (
     <aside className="sidebar">
@@ -1558,6 +1926,7 @@ function Sidebar({ isSchoolAdmin, myStudents, selectedSchoolId }) {
             <NavLink to="/config/students">Students</NavLink>
             <NavLink to="/config/schools">Schools</NavLink>
             <NavLink to="/config/fees">Fees</NavLink>
+            <NavLink to="/config/charges">Charges</NavLink>
           </div>
         )}
 
@@ -1637,7 +2006,10 @@ function AppLayout({
         <Routes>
           <Route path="/dashboard" element={<DashboardPage activeSchool={activeSchool} />} />
           <Route path="/profile" element={<ProfilePage me={me} selectedSchool={selectedSchool} />} />
-          <Route path="/students/:studentId" element={<StudentDetailPage selectedSchoolId={selectedSchoolId} request={request} />} />
+          <Route
+            path="/students/:studentId"
+            element={<StudentDetailPage selectedSchoolId={selectedSchoolId} request={request} isSchoolAdmin={isSchoolAdmin} />}
+          />
           <Route
             path="/config/users"
             element={isSchoolAdmin ? <UsersConfigPage request={request} selectedSchoolId={selectedSchoolId} /> : <Navigate replace to="/dashboard" />}
@@ -1655,6 +2027,10 @@ function AppLayout({
           <Route
             path="/config/fees"
             element={isSchoolAdmin ? <FeesConfigPage request={request} selectedSchoolId={selectedSchoolId} /> : <Navigate replace to="/dashboard" />}
+          />
+          <Route
+            path="/config/charges"
+            element={isSchoolAdmin ? <ChargesConfigPage request={request} selectedSchoolId={selectedSchoolId} /> : <Navigate replace to="/dashboard" />}
           />
           <Route path="*" element={<Navigate replace to="/dashboard" />} />
         </Routes>

@@ -20,7 +20,7 @@
 - For entities with associations (users/students), keep association diff/sync in backend services.
   - `PUT` update contracts should accept partial `associations.add/remove` operations.
   - Frontend should send desired deltas; backend computes and applies valid changes.
-- Standardize list endpoints (`/users`, `/schools`, `/students`, `/fees`) with shared pagination/search contracts:
+- Standardize list endpoints (`/users`, `/schools`, `/students`, `/fees`, `/charges`) with shared pagination/search contracts:
   - Query params: `offset`, `limit`, `search`.
   - Response envelope: `{ items, pagination }`.
   - Use shared pagination/search helpers instead of duplicating ad-hoc query/count logic.
