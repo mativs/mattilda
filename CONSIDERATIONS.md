@@ -42,3 +42,7 @@ If dataset size or latency requirements increase, the next optimization step is 
 ## Invoice immutability
 
 `invoice_items` persist snapshots of `charge.description`, `charge.amount`, and `charge_type` at billing time. This keeps issued invoices stable and auditable even if the original charge is later updated or cancelled.
+
+## Payment considerations
+
+Payments can be partial and may not settle the full invoice amount in a single transaction. In this scope, the seed data intentionally includes both full and partial invoice payments to exercise historical reporting and visibility flows.

@@ -91,6 +91,11 @@ class School(SoftDeleteMixin, TimestampMixin, Base):
         back_populates="school",
         cascade="all, delete-orphan",
     )
+    payments: Mapped[list["Payment"]] = relationship(
+        "Payment",
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )
 
 
 class UserSchoolRole(TimestampMixin, Base):
@@ -144,6 +149,11 @@ class Student(SoftDeleteMixin, TimestampMixin, Base):
     )
     invoices: Mapped[list["Invoice"]] = relationship(
         "Invoice",
+        back_populates="student",
+        cascade="all, delete-orphan",
+    )
+    payments: Mapped[list["Payment"]] = relationship(
+        "Payment",
         back_populates="student",
         cascade="all, delete-orphan",
     )
@@ -258,6 +268,11 @@ class Invoice(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     charges: Mapped[list["Charge"]] = relationship("Charge", foreign_keys=[Charge.invoice_id], back_populates="invoice")
+    payments: Mapped[list["Payment"]] = relationship(
+        "Payment",
+        back_populates="invoice",
+        cascade="all, delete-orphan",
+    )
 
 
 class InvoiceItem(TimestampMixin, Base):
@@ -272,3 +287,22 @@ class InvoiceItem(TimestampMixin, Base):
 
     invoice: Mapped[Invoice] = relationship("Invoice", back_populates="items")
     charge: Mapped[Charge] = relationship("Charge")
+
+
+class Payment(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
+    __tablename__ = "payments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    invoice_id: Mapped[int | None] = mapped_column(
+        ForeignKey("invoices.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    method: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+
+    school: Mapped[School] = relationship("School", back_populates="payments")
+    student: Mapped[Student] = relationship("Student", back_populates="payments")
+    invoice: Mapped[Invoice | None] = relationship("Invoice", back_populates="payments")

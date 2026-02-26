@@ -9,7 +9,20 @@ from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.fee_recurrence import FeeRecurrence
 from app.domain.invoice_status import InvoiceStatus
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import Charge, FeeDefinition, Invoice, InvoiceItem, School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
+from app.infrastructure.db.models import (
+    Charge,
+    FeeDefinition,
+    Invoice,
+    InvoiceItem,
+    Payment,
+    School,
+    Student,
+    StudentSchool,
+    User,
+    UserProfile,
+    UserSchoolRole,
+    UserStudent,
+)
 from app.infrastructure.db.session import SessionLocal
 
 HISTORY_PERIODS = 6
@@ -222,6 +235,41 @@ def create_invoice_item_if_missing(
     return item
 
 
+def create_payment_if_missing(
+    db: Session,
+    *,
+    school_id: int,
+    student_id: int,
+    invoice_id: int | None,
+    amount: Decimal,
+    paid_at: datetime,
+    method: str,
+) -> Payment:
+    existing = db.execute(
+        select(Payment).where(
+            Payment.school_id == school_id,
+            Payment.student_id == student_id,
+            Payment.invoice_id == invoice_id,
+            Payment.amount == amount,
+            Payment.paid_at == paid_at,
+            Payment.deleted_at.is_(None),
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    payment = Payment(
+        school_id=school_id,
+        student_id=student_id,
+        invoice_id=invoice_id,
+        amount=amount,
+        paid_at=paid_at,
+        method=method,
+    )
+    db.add(payment)
+    db.flush()
+    return payment
+
+
 def _add_months(base_date: date, months: int) -> date:
     year_offset, month_index = divmod((base_date.month - 1) + months, 12)
     return date(base_date.year + year_offset, month_index + 1, 1)
@@ -247,8 +295,9 @@ def seed_billing_history_for_student_school(
 ) -> None:
     previous_periods = periods[:-1]
     current_period = periods[-1]
+    payment_methods = ["transfer", "cash", "card"]
 
-    for period_start in previous_periods:
+    for index, period_start in enumerate(previous_periods):
         period = _period_label(period_start)
         due_date = date(period_start.year, period_start.month, 10)
         issued_at = datetime(period_start.year, period_start.month, 1, 9, 0, tzinfo=timezone.utc)
@@ -287,6 +336,15 @@ def seed_billing_history_for_student_school(
         charge.status = ChargeStatus.billed
         charge.invoice_id = invoice.id
         charge.origin_invoice_id = invoice.id
+        create_payment_if_missing(
+            db=db,
+            school_id=school.id,
+            student_id=student.id,
+            invoice_id=invoice.id,
+            amount=invoice.total_amount,
+            paid_at=datetime(period_start.year, period_start.month, 12, 12, 0, tzinfo=timezone.utc),
+            method=payment_methods[index % len(payment_methods)],
+        )
 
     current_label = _period_label(current_period)
     current_due_date = date(current_period.year, current_period.month, 10)
@@ -338,6 +396,15 @@ def seed_billing_history_for_student_school(
     partial_charge.status = ChargeStatus.billed
     partial_charge.invoice_id = open_invoice.id
     partial_charge.origin_invoice_id = open_invoice.id
+    create_payment_if_missing(
+        db=db,
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=open_invoice.id,
+        amount=(open_invoice.total_amount / Decimal("2")).quantize(Decimal("0.01")),
+        paid_at=datetime(current_period.year, current_period.month, 8, 12, 0, tzinfo=timezone.utc),
+        method=payment_methods[0],
+    )
 
 
 def main() -> None:

@@ -11,6 +11,7 @@ from app.infrastructure.db.models import (
     Charge,
     Invoice,
     InvoiceItem,
+    Payment,
     School,
     Student,
     StudentSchool,
@@ -150,3 +151,27 @@ def create_invoice_item(
     db.commit()
     db.refresh(item)
     return item
+
+
+def create_payment(
+    db: Session,
+    *,
+    school_id: int,
+    student_id: int,
+    amount: str,
+    paid_at: datetime,
+    method: str = "transfer",
+    invoice_id: int | None = None,
+) -> Payment:
+    payment = Payment(
+        school_id=school_id,
+        student_id=student_id,
+        invoice_id=invoice_id,
+        amount=Decimal(amount),
+        paid_at=paid_at,
+        method=method,
+    )
+    db.add(payment)
+    db.commit()
+    db.refresh(payment)
+    return payment

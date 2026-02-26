@@ -201,6 +201,9 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
             <NavLink className="ghost action-link" to={`/students/${student.id}/billing`}>
               Billing
             </NavLink>
+            <NavLink className="ghost action-link" to={`/students/${student.id}/payments`}>
+              Payments
+            </NavLink>
           </div>
           {isSchoolAdmin && (
             <div className="association-box">
@@ -414,6 +417,96 @@ function InvoiceDetailPage({ selectedSchoolId, request }) {
           </table>
         </>
       )}
+    </section>
+  );
+}
+
+function StudentPaymentsPage({ selectedSchoolId, request }) {
+  const { studentId } = useParams();
+  const [student, setStudent] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [pagination, setPagination] = useState(null);
+  const [search, setSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [error, setError] = useState("");
+
+  async function loadPayments(nextOffset = offset, nextSearch = search) {
+    const query = new URLSearchParams({ offset: String(nextOffset), limit: String(DEFAULT_LIMIT) });
+    if (nextSearch) {
+      query.set("search", nextSearch);
+    }
+    const [studentPayload, listPayload] = await Promise.all([
+      request(`/api/v1/students/${studentId}`),
+      request(`/api/v1/students/${studentId}/payments?${query.toString()}`),
+    ]);
+    setStudent(studentPayload);
+    setRows(listPayload.items ?? []);
+    setPagination(listPayload.pagination ?? null);
+  }
+
+  useEffect(() => {
+    if (!selectedSchoolId || !studentId) {
+      return;
+    }
+    setError("");
+    loadPayments(0, "").catch((err) => setError(err.message));
+    setOffset(0);
+    setSearch("");
+  }, [selectedSchoolId, studentId]);
+
+  useEffect(() => {
+    if (!selectedSchoolId || !studentId) {
+      return;
+    }
+    loadPayments(offset, search).catch((err) => setError(err.message));
+  }, [offset]);
+
+  useEffect(() => {
+    if (!selectedSchoolId || !studentId) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setOffset(0);
+      loadPayments(0, search).catch((err) => setError(err.message));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  return (
+    <section className="page-card">
+      <SectionTitle>Student Payments</SectionTitle>
+      {student && (
+        <p>
+          {student.first_name} {student.last_name}
+        </p>
+      )}
+      {error && <p className="error">{error}</p>}
+      <div className="toolbar">
+        <input placeholder="Search by method or amount..." value={search} onChange={(event) => setSearch(event.target.value)} />
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Amount</th>
+            <th>Paid at</th>
+            <th>Method</th>
+            <th>Invoice</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>{row.id}</td>
+              <td>{row.amount}</td>
+              <td>{row.paid_at}</td>
+              <td>{row.method}</td>
+              <td>{row.invoice ? `#${row.invoice.id}` : "-"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <PaginationControls pagination={pagination} onChange={setOffset} />
     </section>
   );
 }
@@ -1063,6 +1156,9 @@ function StudentsConfigPage({ request, selectedSchoolId }) {
               <td className="row-actions">
                 <NavLink className="ghost action-link" to={`/students/${row.id}/billing`}>
                   Billing
+                </NavLink>
+                <NavLink className="ghost action-link" to={`/students/${row.id}/payments`}>
+                  Payments
                 </NavLink>
                 <button className="ghost" onClick={() => openEdit(row)} type="button">
                   Edit
@@ -2134,6 +2230,7 @@ function Sidebar({ isSchoolAdmin, myStudents, selectedSchoolId }) {
                 {student.first_name} {student.last_name}
               </NavLink>
               <NavLink to={`/students/${student.id}/billing`}>Billing</NavLink>
+              <NavLink to={`/students/${student.id}/payments`}>Payments</NavLink>
             </div>
           ))}
         </div>
@@ -2209,6 +2306,10 @@ function AppLayout({
             element={<StudentDetailPage selectedSchoolId={selectedSchoolId} request={request} isSchoolAdmin={isSchoolAdmin} />}
           />
           <Route path="/students/:studentId/billing" element={<StudentBillingPage selectedSchoolId={selectedSchoolId} request={request} />} />
+          <Route
+            path="/students/:studentId/payments"
+            element={<StudentPaymentsPage selectedSchoolId={selectedSchoolId} request={request} />}
+          />
           <Route
             path="/students/:studentId/billing/:invoiceId"
             element={<InvoiceDetailPage selectedSchoolId={selectedSchoolId} request={request} />}

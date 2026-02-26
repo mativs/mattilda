@@ -187,6 +187,16 @@ Frontend admin association actions for user-school and student-school use the ac
   - non-admin: can read invoices only for students associated to current user in active school
   - non-visible existing records return `404`
 
+## Payment endpoints
+
+- `POST /api/v1/payments` (admin only, active school-scoped)
+- `GET /api/v1/students/{student_id}/payments` (paginated/searchable, visibility-aware)
+- `GET /api/v1/payments/{payment_id}` (visibility-aware)
+- Visibility rules:
+  - school `admin`: can read all payments from active school
+  - non-admin: can read payments only for students associated to current user in active school
+  - non-visible existing records return `404`
+
 `POST /api/v1/charges` payload example:
 
 ```json
@@ -232,7 +242,7 @@ Frontend admin association actions for user-school and student-school use the ac
 - Sidebar sections:
   - `Dashboard`
   - `Configuration` (admin only): `Users`, `Students`, `Schools`, `Fees`, `Charges`
-  - `Students` (one submenu item per student associated with current user in active school, including `Billing`)
+  - `Students` (one submenu item per student associated with current user in active school, including `Billing` and `Payments`)
 - Top-right area includes:
   - school selector (switches active `X-School-Id` context)
   - avatar shortcut to `/profile`
@@ -244,6 +254,9 @@ Frontend admin association actions for user-school and student-school use the ac
   - invoice list with server-side search/pagination
   - invoice detail with nested line items
   - lightweight print action (`window.print`)
+- Student payments view supports:
+  - read-only payment list with server-side search/pagination
+  - navigation from student page, sidebar student submenu, and admin configuration student rows
 - User create/edit modals include school-role assignment management:
   - table of assigned school + role rows
   - school selector + role selector + add button
@@ -278,5 +291,6 @@ And also creates:
 - Sample fee definitions per school
 - Sample charges per school/student
 - Sample invoices and invoice items (with charge snapshot values)
+- Sample payments (including partial and full payments tied to invoices)
 
 Use the frontend login form at `http://localhost:13000` to verify authenticated session and the dummy home page.
