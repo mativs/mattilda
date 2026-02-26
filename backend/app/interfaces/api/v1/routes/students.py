@@ -3,7 +3,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.application.services.pagination_service import paginate_scalars
-from app.application.services.charge_service import get_student_in_school, get_unbilled_charges_for_student, serialize_charge_response
+from app.application.services.charge_service import (
+    get_student_in_school,
+    get_unbilled_charges_for_student,
+    serialize_charge_response,
+)
 from app.application.services.student_service import (
     associate_student_school,
     associate_user_student,
@@ -19,7 +23,12 @@ from app.application.services.student_service import (
 from app.domain.roles import UserRole
 from app.infrastructure.db.models import Student, StudentSchool, User, UserSchoolRole, UserStudent
 from app.infrastructure.db.session import get_db
-from app.interfaces.api.v1.dependencies.auth import get_current_school_id, get_current_school_memberships, require_authenticated, require_school_admin
+from app.interfaces.api.v1.dependencies.auth import (
+    get_current_school_id,
+    get_current_school_memberships,
+    require_authenticated,
+    require_school_admin,
+)
 from app.interfaces.api.v1.dependencies.pagination import get_pagination_params
 from app.interfaces.api.v1.schemas.pagination import PaginationParams
 from app.interfaces.api.v1.schemas.charge import StudentUnbilledChargesResponse
@@ -73,8 +82,15 @@ def get_students(
     return {"items": [serialize_student_response(student) for student in students], "pagination": meta}
 
 
-@router.post("", response_model=StudentResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_school_admin)])
-def create_student_endpoint(payload: StudentCreate, school_id: int = Depends(get_current_school_id), db: Session = Depends(get_db)):
+@router.post(
+    "",
+    response_model=StudentResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_school_admin)],
+)
+def create_student_endpoint(
+    payload: StudentCreate, school_id: int = Depends(get_current_school_id), db: Session = Depends(get_db)
+):
     student = create_student_for_school(db=db, payload=payload, school_id=school_id)
     return serialize_student_response(student)
 
@@ -137,7 +153,11 @@ def associate_user(student_id: int, payload: StudentAssociateUserPayload, db: Se
     return {"message": "User associated with student"}
 
 
-@router.delete("/{student_id}/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_admin)])
+@router.delete(
+    "/{student_id}/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_school_admin)],
+)
 def deassociate_user(student_id: int, user_id: int, db: Session = Depends(get_db)):
     deassociate_user_student(db=db, user_id=user_id, student_id=student_id)
 
@@ -148,6 +168,10 @@ def associate_school(student_id: int, payload: StudentAssociateSchoolPayload, db
     return {"message": "Student associated with school"}
 
 
-@router.delete("/{student_id}/schools/{school_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_admin)])
+@router.delete(
+    "/{student_id}/schools/{school_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_school_admin)],
+)
 def deassociate_school(student_id: int, school_id: int, db: Session = Depends(get_db)):
     deassociate_student_school(db=db, student_id=student_id, school_id=school_id)

@@ -51,7 +51,12 @@ def get_users(
     return {"items": [serialize_user_response(user) for user in users], "pagination": meta}
 
 
-@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+@router.post(
+    "",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+)
 def create_user_endpoint(payload: UserCreate, db: Session = Depends(get_db)):
     user = create_user(db=db, payload=payload)
     return serialize_user_response(user)
@@ -83,7 +88,9 @@ def update_user_endpoint(user_id: int, payload: UserUpdate, db: Session = Depend
     return serialize_user_response(updated)
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+@router.delete(
+    "/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_roles([UserRole.admin]))]
+)
 def delete_user_endpoint(user_id: int, db: Session = Depends(get_db)):
     user = get_user_by_id(db=db, user_id=user_id)
     if user is None:

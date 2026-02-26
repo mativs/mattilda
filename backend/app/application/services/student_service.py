@@ -41,10 +41,14 @@ def list_students_for_user_in_school(db: Session, user_id: int, school_id: int) 
 
 
 def get_student_by_id(db: Session, student_id: int) -> Student | None:
-    return db.execute(select(Student).where(Student.id == student_id, Student.deleted_at.is_(None))).scalar_one_or_none()
+    return db.execute(
+        select(Student).where(Student.id == student_id, Student.deleted_at.is_(None))
+    ).scalar_one_or_none()
 
 
-def get_visible_student_for_user(db: Session, student_id: int, school_id: int, user_id: int, is_admin: bool) -> Student | None:
+def get_visible_student_for_user(
+    db: Session, student_id: int, school_id: int, user_id: int, is_admin: bool
+) -> Student | None:
     query = (
         select(Student)
         .join(StudentSchool, StudentSchool.student_id == Student.id)
@@ -142,7 +146,9 @@ def delete_student(db: Session, student: Student) -> None:
 
 def associate_user_student(db: Session, user_id: int, student_id: int) -> UserStudent:
     user = db.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None))).scalar_one_or_none()
-    student = db.execute(select(Student).where(Student.id == student_id, Student.deleted_at.is_(None))).scalar_one_or_none()
+    student = db.execute(
+        select(Student).where(Student.id == student_id, Student.deleted_at.is_(None))
+    ).scalar_one_or_none()
     if user is None:
         raise NotFoundError("User not found")
     if student is None:
@@ -173,7 +179,9 @@ def deassociate_user_student(db: Session, user_id: int, student_id: int) -> None
 
 def associate_student_school(db: Session, student_id: int, school_id: int) -> StudentSchool:
     school = db.execute(select(School).where(School.id == school_id, School.deleted_at.is_(None))).scalar_one_or_none()
-    student = db.execute(select(Student).where(Student.id == student_id, Student.deleted_at.is_(None))).scalar_one_or_none()
+    student = db.execute(
+        select(Student).where(Student.id == student_id, Student.deleted_at.is_(None))
+    ).scalar_one_or_none()
     if school is None:
         raise NotFoundError("School not found")
     if student is None:
@@ -234,7 +242,9 @@ def apply_student_association_updates(db: Session, student: Student, association
             db.delete(link)
 
     def apply_add_school(school_id: int) -> None:
-        school = db.execute(select(School).where(School.id == school_id, School.deleted_at.is_(None))).scalar_one_or_none()
+        school = db.execute(
+            select(School).where(School.id == school_id, School.deleted_at.is_(None))
+        ).scalar_one_or_none()
         if school is None:
             raise NotFoundError("School not found")
         db.add(StudentSchool(student_id=student.id, school_id=school_id))

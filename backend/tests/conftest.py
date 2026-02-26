@@ -11,7 +11,16 @@ from testcontainers.postgres import PostgresContainer
 
 from app.application.services.security_service import hash_password
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import DummyRecord, School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
+from app.infrastructure.db.models import (
+    DummyRecord,
+    School,
+    Student,
+    StudentSchool,
+    User,
+    UserProfile,
+    UserSchoolRole,
+    UserStudent,
+)
 from app.infrastructure.db.session import get_db
 from app.main import app
 
@@ -53,16 +62,20 @@ def engine(postgres_url):
 @pytest.fixture(autouse=True)
 def clean_database(engine):
     with engine.begin() as connection:
-        tables = connection.execute(
-            text(
-                """
+        tables = (
+            connection.execute(
+                text(
+                    """
                 SELECT tablename
                 FROM pg_tables
                 WHERE schemaname = 'public' AND tablename <> 'alembic_version'
                 ORDER BY tablename
                 """
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         if tables:
             quoted_tables = ", ".join(f'"{table}"' for table in tables)
             connection.execute(text(f"TRUNCATE TABLE {quoted_tables} RESTART IDENTITY CASCADE"))

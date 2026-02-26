@@ -1,12 +1,24 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
 from app.application.services.security_service import hash_password
 from app.domain.charge_enums import ChargeStatus, ChargeType
+from app.domain.invoice_status import InvoiceStatus
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import Charge, School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
+from app.infrastructure.db.models import (
+    Charge,
+    Invoice,
+    InvoiceItem,
+    School,
+    Student,
+    StudentSchool,
+    User,
+    UserProfile,
+    UserSchoolRole,
+    UserStudent,
+)
 
 
 def create_user(db: Session, email: str, password: str = "pass123", is_active: bool = True) -> User:
@@ -70,6 +82,8 @@ def create_charge(
     status: ChargeStatus = ChargeStatus.unbilled,
     period: str | None = None,
     fee_definition_id: int | None = None,
+    invoice_id: int | None = None,
+    origin_invoice_id: int | None = None,
 ) -> Charge:
     charge = Charge(
         school_id=school_id,
@@ -81,8 +95,58 @@ def create_charge(
         due_date=due_date,
         charge_type=charge_type,
         status=status,
+        invoice_id=invoice_id,
+        origin_invoice_id=origin_invoice_id,
     )
     db.add(charge)
     db.commit()
     db.refresh(charge)
     return charge
+
+
+def create_invoice(
+    db: Session,
+    *,
+    school_id: int,
+    student_id: int,
+    period: str,
+    issued_at: datetime,
+    due_date: date,
+    total_amount: str,
+    status: InvoiceStatus = InvoiceStatus.open,
+) -> Invoice:
+    invoice = Invoice(
+        school_id=school_id,
+        student_id=student_id,
+        period=period,
+        issued_at=issued_at,
+        due_date=due_date,
+        total_amount=Decimal(total_amount),
+        status=status,
+    )
+    db.add(invoice)
+    db.commit()
+    db.refresh(invoice)
+    return invoice
+
+
+def create_invoice_item(
+    db: Session,
+    *,
+    invoice_id: int,
+    charge_id: int,
+    description: str,
+    amount: str,
+    charge_type: ChargeType = ChargeType.fee,
+) -> InvoiceItem:
+    item = InvoiceItem(
+        invoice_id=invoice_id,
+        charge_id=charge_id,
+        description=description,
+        amount=Decimal(amount),
+        charge_type=charge_type,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item

@@ -11,7 +11,11 @@ from app.application.services.security_service import (
 )
 from app.config import settings
 from app.domain.roles import UserRole
-from app.interfaces.api.v1.dependencies.auth import get_current_school_id, require_school_roles, require_self_or_school_roles
+from app.interfaces.api.v1.dependencies.auth import (
+    get_current_school_id,
+    require_school_roles,
+    require_self_or_school_roles,
+)
 
 
 def test_decode_access_token_returns_user_id_for_valid_token():
@@ -230,6 +234,7 @@ def test_require_self_or_school_roles_returns_user_for_self_path_match():
     3. Validate self-access condition is satisfied.
     4. Validate returned user id value.
     """
+
     class RequestSelfStub:
         path_params: dict[str, str] = {"target": "1"}
 
@@ -248,6 +253,7 @@ def test_require_self_or_school_roles_returns_user_for_allowed_membership():
     3. Validate membership role bypasses self-check.
     4. Validate returned user id value.
     """
+
     class RequestOtherStub:
         path_params: dict[str, str] = {"target": "2"}
 
@@ -257,8 +263,11 @@ def test_require_self_or_school_roles_returns_user_for_allowed_membership():
     class TeacherMembershipStub:
         role = UserRole.teacher.value
 
-    assert require_self_or_school_roles("target", [UserRole.teacher])(
-        RequestOtherStub(),
-        CurrentUserStub(),
-        [TeacherMembershipStub()],
-    ).id == 1
+    assert (
+        require_self_or_school_roles("target", [UserRole.teacher])(
+            RequestOtherStub(),
+            CurrentUserStub(),
+            [TeacherMembershipStub()],
+        ).id
+        == 1
+    )

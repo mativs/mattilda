@@ -8,7 +8,12 @@ from app.application.services.association_sync_service import apply_partial_sync
 from app.application.services.security_service import hash_password
 from app.domain.roles import UserRole
 from app.infrastructure.db.models import School, User, UserProfile, UserSchoolRole
-from app.interfaces.api.v1.schemas.user import UserAssociationsUpdate, UserCreate, UserSchoolRoleAssociationUpdate, UserUpdate
+from app.interfaces.api.v1.schemas.user import (
+    UserAssociationsUpdate,
+    UserCreate,
+    UserSchoolRoleAssociationUpdate,
+    UserUpdate,
+)
 
 
 def get_user_by_id(db: Session, user_id: int) -> User | None:
@@ -119,7 +124,9 @@ def get_user_students(user: User) -> list[dict]:
                 "external_id": link.student.external_id,
                 "school_ids": [],
             }
-        school_ids = [school_link.school_id for school_link in link.student.school_links if school_link.school.deleted_at is None]
+        school_ids = [
+            school_link.school_id for school_link in link.student.school_links if school_link.school.deleted_at is None
+        ]
         students[link.student_id]["school_ids"] = sorted(set(school_ids))
     return list(students.values())
 
@@ -137,7 +144,9 @@ def apply_user_association_updates(db: Session, user: User, associations: UserAs
     remove_operations = associations.remove.school_roles
 
     def apply_add(operation: UserSchoolRoleAssociationUpdate) -> None:
-        school = db.execute(select(School).where(School.id == operation.school_id, School.deleted_at.is_(None))).scalar_one_or_none()
+        school = db.execute(
+            select(School).where(School.id == operation.school_id, School.deleted_at.is_(None))
+        ).scalar_one_or_none()
         if school is None:
             raise NotFoundError("School not found")
         db.add(UserSchoolRole(user_id=user.id, school_id=operation.school_id, role=operation.role.value))

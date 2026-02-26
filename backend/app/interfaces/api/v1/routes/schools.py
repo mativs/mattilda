@@ -78,7 +78,9 @@ def get_school(
     return serialize_school_response(school)
 
 
-@router.put("/{school_id}", response_model=SchoolResponse, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+@router.put(
+    "/{school_id}", response_model=SchoolResponse, dependencies=[Depends(require_school_roles([UserRole.admin]))]
+)
 def update_school_endpoint(
     school_id: int,
     payload: SchoolUpdate,
@@ -92,7 +94,11 @@ def update_school_endpoint(
     return serialize_school_response(updated_school)
 
 
-@router.delete("/{school_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+@router.delete(
+    "/{school_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+)
 def delete_school_endpoint(
     school_id: int,
     selected_school_id: int = Depends(get_current_school_id),
@@ -110,6 +116,8 @@ def associate_user_with_school(school_id: int, payload: UserSchoolMembershipPayl
     return {"message": "User associated to school"}
 
 
-@router.delete("/{school_id}/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_admin)])
+@router.delete(
+    "/{school_id}/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_admin)]
+)
 def deassociate_user_from_school(school_id: int, user_id: int, db: Session = Depends(get_db)):
     remove_user_school_roles(db=db, school_id=school_id, user_id=user_id)

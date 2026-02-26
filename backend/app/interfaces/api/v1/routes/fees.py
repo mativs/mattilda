@@ -43,7 +43,12 @@ def get_fees(
     return {"items": [serialize_fee_response(item) for item in items], "pagination": meta}
 
 
-@router.post("", response_model=FeeResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+@router.post(
+    "",
+    response_model=FeeResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+)
 def create_fee_endpoint(
     payload: FeeCreate,
     school_id: int = Depends(get_current_school_id),
@@ -75,7 +80,9 @@ def update_fee_endpoint(
     return serialize_fee_response(updated)
 
 
-@router.delete("/{fee_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+@router.delete(
+    "/{fee_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_roles([UserRole.admin]))]
+)
 def delete_fee_endpoint(fee_id: int, school_id: int = Depends(get_current_school_id), db: Session = Depends(get_db)):
     fee = get_fee_definition_by_id(db=db, fee_id=fee_id, school_id=school_id)
     if fee is None:

@@ -53,6 +53,15 @@ button:disabled {
   color: #111827;
 }
 
+.action-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  padding: 10px 14px;
+  line-height: 1;
+}
+
 .danger {
   background: #dc2626;
 }

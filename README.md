@@ -177,6 +177,16 @@ Frontend admin association actions for user-school and student-school use the ac
 - `DELETE /api/v1/charges/{charge_id}` (admin only, soft delete + status `cancelled`)
 - `GET /api/v1/students/{student_id}/charges/unbilled` (admin only; returns unbilled items and `total_unbilled_amount`)
 
+## Invoice endpoints
+
+- `GET /api/v1/students/{student_id}/invoices` (paginated/searchable summaries only; each row excludes invoice items)
+- `GET /api/v1/invoices/{invoice_id}` (invoice detail with nested `items`)
+- `GET /api/v1/invoices/{invoice_id}/items` (invoice items list; compatibility read endpoint)
+- Visibility rules:
+  - school `admin`: can read all invoices from active school
+  - non-admin: can read invoices only for students associated to current user in active school
+  - non-visible existing records return `404`
+
 `POST /api/v1/charges` payload example:
 
 ```json
@@ -222,7 +232,7 @@ Frontend admin association actions for user-school and student-school use the ac
 - Sidebar sections:
   - `Dashboard`
   - `Configuration` (admin only): `Users`, `Students`, `Schools`, `Fees`, `Charges`
-  - `Students` (one submenu item per student associated with current user in active school)
+  - `Students` (one submenu item per student associated with current user in active school, including `Billing`)
 - Top-right area includes:
   - school selector (switches active `X-School-Id` context)
   - avatar shortcut to `/profile`
@@ -230,6 +240,10 @@ Frontend admin association actions for user-school and student-school use the ac
   - server-side search and pagination (`offset`, `limit`, `search`)
   - create/edit modals
   - row delete actions with confirmation
+- Student billing views support:
+  - invoice list with server-side search/pagination
+  - invoice detail with nested line items
+  - lightweight print action (`window.print`)
 - User create/edit modals include school-role assignment management:
   - table of assigned school + role rows
   - school selector + role selector + add button
@@ -263,5 +277,6 @@ And also creates:
 - Sample students linked to users and schools
 - Sample fee definitions per school
 - Sample charges per school/student
+- Sample invoices and invoice items (with charge snapshot values)
 
 Use the frontend login form at `http://localhost:13000` to verify authenticated session and the dummy home page.

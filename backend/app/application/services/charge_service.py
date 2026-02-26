@@ -16,6 +16,8 @@ def serialize_charge_response(charge: Charge) -> dict:
         "school_id": charge.school_id,
         "student_id": charge.student_id,
         "fee_definition_id": charge.fee_definition_id,
+        "invoice_id": charge.invoice_id,
+        "origin_invoice_id": charge.origin_invoice_id,
         "description": charge.description,
         "amount": charge.amount,
         "period": charge.period,

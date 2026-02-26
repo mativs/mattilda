@@ -154,9 +154,13 @@ def add_user_school_role(db: Session, school_id: int, user_id: int, role: str) -
 
 
 def remove_user_school_roles(db: Session, school_id: int, user_id: int) -> None:
-    memberships = db.execute(
-        select(UserSchoolRole).where(UserSchoolRole.school_id == school_id, UserSchoolRole.user_id == user_id)
-    ).scalars().all()
+    memberships = (
+        db.execute(
+            select(UserSchoolRole).where(UserSchoolRole.school_id == school_id, UserSchoolRole.user_id == user_id)
+        )
+        .scalars()
+        .all()
+    )
     if not memberships:
         raise NotFoundError("Membership not found")
     for membership in memberships:

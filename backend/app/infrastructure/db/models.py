@@ -6,6 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.fee_recurrence import FeeRecurrence
+from app.domain.invoice_status import InvoiceStatus
 from app.infrastructure.db.session import Base
 
 
@@ -20,7 +21,9 @@ class TimestampMixin:
 
 
 class SoftDeleteMixin:
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None, index=True
+    )
 
 
 class TenantScopedMixin:
@@ -35,7 +38,9 @@ class User(SoftDeleteMixin, TimestampMixin, Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    profile: Mapped["UserProfile"] = relationship("UserProfile", back_populates="user", uselist=False, cascade="all,delete")
+    profile: Mapped["UserProfile"] = relationship(
+        "UserProfile", back_populates="user", uselist=False, cascade="all,delete"
+    )
     school_memberships: Mapped[list["UserSchoolRole"]] = relationship(
         "UserSchoolRole",
         back_populates="user",
@@ -78,6 +83,11 @@ class School(SoftDeleteMixin, TimestampMixin, Base):
     )
     charges: Mapped[list["Charge"]] = relationship(
         "Charge",
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )
+    invoices: Mapped[list["Invoice"]] = relationship(
+        "Invoice",
         back_populates="school",
         cascade="all, delete-orphan",
     )
@@ -132,6 +142,11 @@ class Student(SoftDeleteMixin, TimestampMixin, Base):
         back_populates="student",
         cascade="all, delete-orphan",
     )
+    invoices: Mapped[list["Invoice"]] = relationship(
+        "Invoice",
+        back_populates="student",
+        cascade="all, delete-orphan",
+    )
 
 
 class UserStudent(TimestampMixin, Base):
@@ -172,7 +187,9 @@ class FeeDefinition(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    recurrence: Mapped[FeeRecurrence] = mapped_column(Enum(FeeRecurrence, name="fee_recurrence"), nullable=False, index=True)
+    recurrence: Mapped[FeeRecurrence] = mapped_column(
+        Enum(FeeRecurrence, name="fee_recurrence"), nullable=False, index=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     school: Mapped[School] = relationship("School", back_populates="fee_definitions")
@@ -186,6 +203,14 @@ class Charge(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
     fee_definition_id: Mapped[int | None] = mapped_column(
         ForeignKey("fee_definitions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    invoice_id: Mapped[int | None] = mapped_column(
+        ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    origin_invoice_id: Mapped[int | None] = mapped_column(
+        ForeignKey("invoices.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -204,3 +229,46 @@ class Charge(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
     school: Mapped[School] = relationship("School", back_populates="charges")
     student: Mapped[Student] = relationship("Student", back_populates="charges")
     fee_definition: Mapped[FeeDefinition | None] = relationship("FeeDefinition", back_populates="charges")
+    invoice: Mapped["Invoice | None"] = relationship(
+        "Invoice",
+        foreign_keys=[invoice_id],
+        back_populates="charges",
+    )
+    origin_invoice: Mapped["Invoice | None"] = relationship("Invoice", foreign_keys=[origin_invoice_id])
+
+
+class Invoice(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
+    __tablename__ = "invoices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    period: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    status: Mapped[InvoiceStatus] = mapped_column(
+        Enum(InvoiceStatus, name="invoice_status"), nullable=False, index=True
+    )
+
+    school: Mapped[School] = relationship("School", back_populates="invoices")
+    student: Mapped[Student] = relationship("Student", back_populates="invoices")
+    items: Mapped[list["InvoiceItem"]] = relationship(
+        "InvoiceItem",
+        back_populates="invoice",
+        cascade="all, delete-orphan",
+    )
+    charges: Mapped[list["Charge"]] = relationship("Charge", foreign_keys=[Charge.invoice_id], back_populates="invoice")
+
+
+class InvoiceItem(TimestampMixin, Base):
+    __tablename__ = "invoice_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True)
+    charge_id: Mapped[int] = mapped_column(ForeignKey("charges.id", ondelete="RESTRICT"), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    charge_type: Mapped[ChargeType] = mapped_column(Enum(ChargeType, name="charge_type"), nullable=False, index=True)
+
+    invoice: Mapped[Invoice] = relationship("Invoice", back_populates="items")
+    charge: Mapped[Charge] = relationship("Charge")

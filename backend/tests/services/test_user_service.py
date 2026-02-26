@@ -90,7 +90,9 @@ def test_update_user_updates_profile_fields(db_session):
     updated = update_user(
         db_session,
         user,
-        UserUpdate(profile=UserProfileUpdate(first_name="Updated", last_name="Surname", phone="555", address="New Road")),
+        UserUpdate(
+            profile=UserProfileUpdate(first_name="Updated", last_name="Surname", phone="555", address="New Road")
+        ),
     )
     assert updated.profile.first_name == "Updated"
     assert updated.profile.last_name == "Surname"

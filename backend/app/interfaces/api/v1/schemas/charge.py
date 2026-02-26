@@ -44,6 +44,8 @@ class ChargeResponse(ChargeBase):
 
     id: int
     school_id: int
+    invoice_id: int | None = None
+    origin_invoice_id: int | None = None
     created_at: datetime
     updated_at: datetime
     student: ChargeStudentRef

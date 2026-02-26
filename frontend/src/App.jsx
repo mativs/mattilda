@@ -197,6 +197,11 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
           <p>
             {student.first_name} {student.last_name}
           </p>
+          <div className="row-actions">
+            <NavLink className="ghost action-link" to={`/students/${student.id}/billing`}>
+              Billing
+            </NavLink>
+          </div>
           {isSchoolAdmin && (
             <div className="association-box">
               <p className="muted">Unbilled charges total: {unbilled.total_unbilled_amount}</p>
@@ -224,6 +229,189 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
               </table>
             </div>
           )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function StudentBillingPage({ selectedSchoolId, request }) {
+  const { studentId } = useParams();
+  const [student, setStudent] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [pagination, setPagination] = useState(null);
+  const [search, setSearch] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [error, setError] = useState("");
+
+  async function loadInvoices(nextOffset = offset, nextSearch = search) {
+    const query = new URLSearchParams({ offset: String(nextOffset), limit: String(DEFAULT_LIMIT) });
+    if (nextSearch) {
+      query.set("search", nextSearch);
+    }
+    const [studentPayload, listPayload] = await Promise.all([
+      request(`/api/v1/students/${studentId}`),
+      request(`/api/v1/students/${studentId}/invoices?${query.toString()}`),
+    ]);
+    setStudent(studentPayload);
+    setRows(listPayload.items ?? []);
+    setPagination(listPayload.pagination ?? null);
+  }
+
+  useEffect(() => {
+    if (!selectedSchoolId || !studentId) {
+      return;
+    }
+    setError("");
+    loadInvoices(0, "").catch((err) => setError(err.message));
+    setOffset(0);
+    setSearch("");
+  }, [selectedSchoolId, studentId]);
+
+  useEffect(() => {
+    if (!selectedSchoolId || !studentId) {
+      return;
+    }
+    loadInvoices(offset, search).catch((err) => setError(err.message));
+  }, [offset]);
+
+  useEffect(() => {
+    if (!selectedSchoolId || !studentId) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setOffset(0);
+      loadInvoices(0, search).catch((err) => setError(err.message));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  return (
+    <section className="page-card">
+      <SectionTitle>Student Billing</SectionTitle>
+      {student && (
+        <p>
+          {student.first_name} {student.last_name}
+        </p>
+      )}
+      {error && <p className="error">{error}</p>}
+      <div className="toolbar">
+        <input placeholder="Search by period or status..." value={search} onChange={(event) => setSearch(event.target.value)} />
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Period</th>
+            <th>Issued</th>
+            <th>Due</th>
+            <th>Total</th>
+            <th>Status</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>{row.id}</td>
+              <td>{row.period}</td>
+              <td>{row.issued_at}</td>
+              <td>{row.due_date}</td>
+              <td>{row.total_amount}</td>
+              <td>{row.status}</td>
+              <td className="row-actions">
+                <NavLink className="ghost action-link" to={`/students/${studentId}/billing/${row.id}`}>
+                  Open
+                </NavLink>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <PaginationControls pagination={pagination} onChange={setOffset} />
+    </section>
+  );
+}
+
+function InvoiceDetailPage({ selectedSchoolId, request }) {
+  const { invoiceId } = useParams();
+  const [invoice, setInvoice] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function loadInvoice() {
+      if (!selectedSchoolId || !invoiceId) {
+        return;
+      }
+      setError("");
+      try {
+        const payload = await request(`/api/v1/invoices/${invoiceId}`);
+        setInvoice(payload);
+      } catch (err) {
+        setError(err.message);
+        setInvoice(null);
+      }
+    }
+    loadInvoice();
+  }, [selectedSchoolId, invoiceId, request]);
+
+  return (
+    <section className="page-card">
+      <SectionTitle>Invoice Detail</SectionTitle>
+      {error && <p className="error">{error}</p>}
+      {invoice && (
+        <>
+          <div className="kv-grid">
+            <div>
+              <span className="muted">Invoice</span>
+              <p>#{invoice.id}</p>
+            </div>
+            <div>
+              <span className="muted">Period</span>
+              <p>{invoice.period}</p>
+            </div>
+            <div>
+              <span className="muted">Issued</span>
+              <p>{invoice.issued_at}</p>
+            </div>
+            <div>
+              <span className="muted">Due</span>
+              <p>{invoice.due_date}</p>
+            </div>
+            <div>
+              <span className="muted">Total</span>
+              <p>{invoice.total_amount}</p>
+            </div>
+            <div>
+              <span className="muted">Status</span>
+              <p>{invoice.status}</p>
+            </div>
+          </div>
+          <div className="row-actions">
+            <button className="ghost" onClick={() => window.print()} type="button">
+              Print
+            </button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Description</th>
+                <th>Type</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoice.items.map((item) => (
+                <tr key={item.id}>
+                  <td>{item.id}</td>
+                  <td>{item.description}</td>
+                  <td>{item.charge_type}</td>
+                  <td>{item.amount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </>
       )}
     </section>
@@ -864,11 +1052,18 @@ function StudentsConfigPage({ request, selectedSchoolId }) {
         <tbody>
           {rows.map((row) => (
             <tr key={row.id}>
-              <td>{row.id}</td>
+              <td>
+                <NavLink className="ghost action-link" to={`/students/${row.id}`}>
+                  {row.id}
+                </NavLink>
+              </td>
               <td>{row.first_name}</td>
               <td>{row.last_name}</td>
               <td>{row.external_id ?? "-"}</td>
               <td className="row-actions">
+                <NavLink className="ghost action-link" to={`/students/${row.id}/billing`}>
+                  Billing
+                </NavLink>
                 <button className="ghost" onClick={() => openEdit(row)} type="button">
                   Edit
                 </button>
@@ -1934,9 +2129,12 @@ function Sidebar({ isSchoolAdmin, myStudents, selectedSchoolId }) {
           <p>Students</p>
           {myStudents.length === 0 && <span className="muted">No students</span>}
           {myStudents.map((student) => (
-            <NavLink key={student.id} to={`/students/${student.id}`}>
-              {student.first_name} {student.last_name}
-            </NavLink>
+            <div key={student.id} className="sidebar-group">
+              <NavLink to={`/students/${student.id}`}>
+                {student.first_name} {student.last_name}
+              </NavLink>
+              <NavLink to={`/students/${student.id}/billing`}>Billing</NavLink>
+            </div>
           ))}
         </div>
 
@@ -2009,6 +2207,11 @@ function AppLayout({
           <Route
             path="/students/:studentId"
             element={<StudentDetailPage selectedSchoolId={selectedSchoolId} request={request} isSchoolAdmin={isSchoolAdmin} />}
+          />
+          <Route path="/students/:studentId/billing" element={<StudentBillingPage selectedSchoolId={selectedSchoolId} request={request} />} />
+          <Route
+            path="/students/:studentId/billing/:invoiceId"
+            element={<InvoiceDetailPage selectedSchoolId={selectedSchoolId} request={request} />}
           />
           <Route
             path="/config/users"

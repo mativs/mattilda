@@ -33,7 +33,9 @@ def test_get_schools_applies_limit_and_offset(client, seeded_users, db_session):
     school_two = create_school(db_session, "Offset Two", "offset-two")
     add_membership(db_session, seeded_users["admin"].id, school_one.id, UserRole.admin)
     add_membership(db_session, seeded_users["admin"].id, school_two.id, UserRole.admin)
-    response = client.get("/api/v1/schools?offset=1&limit=1", headers=auth_header(token_for_user(seeded_users["admin"].id)))
+    response = client.get(
+        "/api/v1/schools?offset=1&limit=1", headers=auth_header(token_for_user(seeded_users["admin"].id))
+    )
     assert response.status_code == 200
     payload = response.json()
     assert len(payload["items"]) == 1
@@ -55,7 +57,9 @@ def test_get_schools_applies_search_on_name_and_slug(client, seeded_users, db_se
     non_matching = create_school(db_session, "Other Campus", "other-campus")
     add_membership(db_session, seeded_users["admin"].id, matching.id, UserRole.admin)
     add_membership(db_session, seeded_users["admin"].id, non_matching.id, UserRole.admin)
-    response = client.get("/api/v1/schools?search=needle", headers=auth_header(token_for_user(seeded_users["admin"].id)))
+    response = client.get(
+        "/api/v1/schools?search=needle", headers=auth_header(token_for_user(seeded_users["admin"].id))
+    )
     assert response.status_code == 200
     payload = response.json()
     slugs = {item["slug"] for item in payload["items"]}

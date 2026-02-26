@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -7,9 +7,13 @@ from sqlalchemy.orm import Session
 from app.application.services.security_service import hash_password
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.fee_recurrence import FeeRecurrence
+from app.domain.invoice_status import InvoiceStatus
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import Charge, FeeDefinition, School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
+from app.infrastructure.db.models import Charge, FeeDefinition, Invoice, InvoiceItem, School, Student, StudentSchool, User, UserProfile, UserSchoolRole, UserStudent
 from app.infrastructure.db.session import SessionLocal
+
+HISTORY_PERIODS = 6
+ANCHOR_PERIOD = date(2026, 3, 1)
 
 
 def create_user_if_missing(
@@ -153,6 +157,189 @@ def create_charge_if_missing(
     return charge
 
 
+def create_invoice_if_missing(
+    db: Session,
+    *,
+    school_id: int,
+    student_id: int,
+    period: str,
+    issued_at: datetime,
+    due_date: date,
+    total_amount: Decimal,
+    status: InvoiceStatus,
+) -> Invoice:
+    existing = db.execute(
+        select(Invoice).where(
+            Invoice.school_id == school_id,
+            Invoice.student_id == student_id,
+            Invoice.period == period,
+            Invoice.status == status,
+            Invoice.deleted_at.is_(None),
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    invoice = Invoice(
+        school_id=school_id,
+        student_id=student_id,
+        period=period,
+        issued_at=issued_at,
+        due_date=due_date,
+        total_amount=total_amount,
+        status=status,
+    )
+    db.add(invoice)
+    db.flush()
+    return invoice
+
+
+def create_invoice_item_if_missing(
+    db: Session,
+    *,
+    invoice_id: int,
+    charge_id: int,
+    description: str,
+    amount: Decimal,
+    charge_type: ChargeType,
+) -> InvoiceItem:
+    existing = db.execute(
+        select(InvoiceItem).where(
+            InvoiceItem.invoice_id == invoice_id,
+            InvoiceItem.charge_id == charge_id,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    item = InvoiceItem(
+        invoice_id=invoice_id,
+        charge_id=charge_id,
+        description=description,
+        amount=amount,
+        charge_type=charge_type,
+    )
+    db.add(item)
+    db.flush()
+    return item
+
+
+def _add_months(base_date: date, months: int) -> date:
+    year_offset, month_index = divmod((base_date.month - 1) + months, 12)
+    return date(base_date.year + year_offset, month_index + 1, 1)
+
+
+def build_recent_period_starts(*, anchor_period: date, count: int) -> list[date]:
+    oldest_offset = -(count - 1)
+    return [_add_months(anchor_period, oldest_offset + index) for index in range(count)]
+
+
+def _period_label(period_start: date) -> str:
+    return f"{period_start.year:04d}-{period_start.month:02d}"
+
+
+def seed_billing_history_for_student_school(
+    db: Session,
+    *,
+    student: Student,
+    school: School,
+    monthly_fee: FeeDefinition,
+    monthly_amount: Decimal,
+    periods: list[date],
+) -> None:
+    previous_periods = periods[:-1]
+    current_period = periods[-1]
+
+    for period_start in previous_periods:
+        period = _period_label(period_start)
+        due_date = date(period_start.year, period_start.month, 10)
+        issued_at = datetime(period_start.year, period_start.month, 1, 9, 0, tzinfo=timezone.utc)
+        description = f"{monthly_fee.name} {period}"
+        charge = create_charge_if_missing(
+            db=db,
+            school_id=school.id,
+            student_id=student.id,
+            fee_definition_id=monthly_fee.id,
+            description=description,
+            amount=monthly_amount,
+            period=period,
+            due_date=due_date,
+            charge_type=ChargeType.fee,
+            status=ChargeStatus.billed,
+        )
+        invoice = create_invoice_if_missing(
+            db=db,
+            school_id=school.id,
+            student_id=student.id,
+            period=period,
+            issued_at=issued_at,
+            due_date=due_date,
+            total_amount=monthly_amount,
+            status=InvoiceStatus.closed,
+        )
+        create_invoice_item_if_missing(
+            db=db,
+            invoice_id=invoice.id,
+            charge_id=charge.id,
+            description=charge.description,
+            amount=charge.amount,
+            charge_type=charge.charge_type,
+        )
+        invoice.total_amount = sum((item.amount for item in invoice.items), Decimal("0.00"))
+        charge.status = ChargeStatus.billed
+        charge.invoice_id = invoice.id
+        charge.origin_invoice_id = invoice.id
+
+    current_label = _period_label(current_period)
+    current_due_date = date(current_period.year, current_period.month, 10)
+    create_charge_if_missing(
+        db=db,
+        school_id=school.id,
+        student_id=student.id,
+        fee_definition_id=monthly_fee.id,
+        description=f"{monthly_fee.name} {current_label} (pending)",
+        amount=monthly_amount,
+        period=current_label,
+        due_date=current_due_date,
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.unbilled,
+    )
+
+    partial_amount = (monthly_amount / Decimal("2")).quantize(Decimal("0.01"))
+    partial_charge = create_charge_if_missing(
+        db=db,
+        school_id=school.id,
+        student_id=student.id,
+        fee_definition_id=monthly_fee.id,
+        description=f"{monthly_fee.name} {current_label} (partial billed)",
+        amount=partial_amount,
+        period=current_label,
+        due_date=current_due_date,
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.billed,
+    )
+    open_invoice = create_invoice_if_missing(
+        db=db,
+        school_id=school.id,
+        student_id=student.id,
+        period=current_label,
+        issued_at=datetime(current_period.year, current_period.month, 1, 9, 0, tzinfo=timezone.utc),
+        due_date=current_due_date,
+        total_amount=partial_amount,
+        status=InvoiceStatus.open,
+    )
+    create_invoice_item_if_missing(
+        db=db,
+        invoice_id=open_invoice.id,
+        charge_id=partial_charge.id,
+        description=partial_charge.description,
+        amount=partial_charge.amount,
+        charge_type=partial_charge.charge_type,
+    )
+    open_invoice.total_amount = sum((item.amount for item in open_invoice.items), Decimal("0.00"))
+    partial_charge.status = ChargeStatus.billed
+    partial_charge.invoice_id = open_invoice.id
+    partial_charge.origin_invoice_id = open_invoice.id
+
+
 def main() -> None:
     db = SessionLocal()
     try:
@@ -194,63 +381,48 @@ def main() -> None:
         associate_user_student_if_missing(db=db, user_id=student.id, student_id=child_two.id)
         associate_user_student_if_missing(db=db, user_id=teacher.id, student_id=child_two.id)
 
-        monthly_fee = create_fee_if_missing(
+        north_monthly_fee = create_fee_if_missing(
             db=db,
             school_id=north_school.id,
             name="Cuota mensual",
             amount=Decimal("150.00"),
             recurrence=FeeRecurrence.monthly,
         )
-        annual_fee = create_fee_if_missing(
+        create_fee_if_missing(
             db=db,
             school_id=north_school.id,
             name="Matrícula",
             amount=Decimal("450.00"),
             recurrence=FeeRecurrence.annual,
         )
-        materials_fee = create_fee_if_missing(
+        south_monthly_fee = create_fee_if_missing(
+            db=db,
+            school_id=south_school.id,
+            name="Cuota mensual",
+            amount=Decimal("120.00"),
+            recurrence=FeeRecurrence.monthly,
+        )
+        create_fee_if_missing(
             db=db,
             school_id=south_school.id,
             name="Materiales",
             amount=Decimal("95.00"),
             recurrence=FeeRecurrence.one_time,
         )
-        create_charge_if_missing(
-            db=db,
-            school_id=north_school.id,
-            student_id=child_one.id,
-            fee_definition_id=monthly_fee.id,
-            description="Cuota mensual marzo",
-            amount=Decimal("150.00"),
-            period="2026-03",
-            due_date=date(2026, 3, 10),
-            charge_type=ChargeType.fee,
-            status=ChargeStatus.unbilled,
-        )
-        create_charge_if_missing(
-            db=db,
-            school_id=north_school.id,
-            student_id=child_two.id,
-            fee_definition_id=annual_fee.id,
-            description="Matrícula 2026",
-            amount=Decimal("450.00"),
-            period="2026",
-            due_date=date(2026, 3, 5),
-            charge_type=ChargeType.fee,
-            status=ChargeStatus.billed,
-        )
-        create_charge_if_missing(
-            db=db,
-            school_id=south_school.id,
-            student_id=child_two.id,
-            fee_definition_id=materials_fee.id,
-            description="Materiales",
-            amount=Decimal("95.00"),
-            period=None,
-            due_date=date(2026, 3, 12),
-            charge_type=ChargeType.fee,
-            status=ChargeStatus.unbilled,
-        )
+        periods = build_recent_period_starts(anchor_period=ANCHOR_PERIOD, count=HISTORY_PERIODS)
+        for student_obj, school_obj, fee_obj, amount in [
+            (child_one, north_school, north_monthly_fee, Decimal("150.00")),
+            (child_two, north_school, north_monthly_fee, Decimal("150.00")),
+            (child_two, south_school, south_monthly_fee, Decimal("120.00")),
+        ]:
+            seed_billing_history_for_student_school(
+                db=db,
+                student=student_obj,
+                school=school_obj,
+                monthly_fee=fee_obj,
+                monthly_amount=amount,
+                periods=periods,
+            )
 
         db.commit()
     finally:

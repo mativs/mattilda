@@ -6,7 +6,11 @@ MIGRATE_ARGS ?=
 SEED_ARGS ?=
 LOGS_SERVICE ?=
 
-.PHONY: help init-env check-uv up down build restart reset ps logs test test-subset lint format typecheck quality migrate seed shell clean
+# Forward only positional pytest paths (exclude invoked make targets like "quality").
+KNOWN_TARGETS := help init-env check-uv up down build restart restart-frontend reset ps logs test test-subset lint format typecheck quality migrate seed shell clean
+PYTEST_PATH_ARGS := $(filter-out $(KNOWN_TARGETS),$(MAKECMDGOALS))
+
+.PHONY: help init-env check-uv up down build restart restart-frontend reset ps logs test test-subset lint format typecheck quality migrate seed shell clean
 
 help:
 	@echo "Available targets:"
@@ -16,6 +20,7 @@ help:
 	@echo "  make down              # Stop stack"
 	@echo "  make build             # Build images"
 	@echo "  make restart           # Restart stack (down + up)"
+	@echo "  make restart-frontend  # Restart frontend service container"
 	@echo "  make reset             # Full reset: clean + up + migrate + seed"
 	@echo "  make ps                # Show service status"
 	@echo "  make logs              # Show logs (set LOGS_SERVICE=backend)"
@@ -48,6 +53,9 @@ build:
 
 restart: down up
 
+restart-frontend:
+	$(COMPOSE) restart frontend
+
 reset: clean up migrate seed
 
 ps:
@@ -57,10 +65,10 @@ logs:
 	$(COMPOSE) logs -f $(LOGS_SERVICE)
 
 test: check-uv
-	cd backend && uv run pytest $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
+	cd backend && uv run pytest $(PYTEST_ARGS) $(PYTEST_PATH_ARGS)
 
 test-subset: check-uv
-	cd backend && uv run pytest --override-ini addopts= $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
+	cd backend && uv run pytest --override-ini addopts= $(PYTEST_ARGS) $(PYTEST_PATH_ARGS)
 
 lint: check-uv
 	cd backend && uv run ruff check app tests
