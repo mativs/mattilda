@@ -467,9 +467,33 @@ def seed_tc_lab_fixtures(db: Session, *, admin: User) -> None:
     payable_due_date = _month_date(payable_month, 10)
     overdue_due_date = _month_date(overdue_month, 10)
 
+    tc_student_names: dict[int, tuple[str, str]] = {
+        1: ("TC01", "FullPaymentOnTime"),
+        2: ("TC02", "FullPaymentMultipleCharges"),
+        3: ("TC03", "NoPaymentInvoiceStaysOpen"),
+        4: ("TC04", "SimplePartialPayment"),
+        5: ("TC05", "PartialAcrossMultipleCharges"),
+        6: ("TC06", "PartialExactBoundary"),
+        7: ("TC07", "OverdueFeeGeneratesInterest"),
+        8: ("TC08", "InterestDeltaOnSecondGeneration"),
+        9: ("TC09", "NoInterestOnInterestCharge"),
+        10: ("TC10", "PaidFeeUnpaidInterestNoCompound"),
+        11: ("TC11", "OverpaymentCreatesNegativeCarry"),
+        12: ("TC12", "NegativeChargeReducesPayment"),
+        13: ("TC13", "OverdueInvoicePaymentCreatesCredit"),
+        14: ("TC14", "InvoiceGeneratedTwiceSamePeriod"),
+        15: ("TC15", "InvoiceTwiceWithNewCharge"),
+    }
+
     for tc in range(1, 16):
         code = f"TC-{tc:02d}"
-        student = create_student_if_missing(db=db, first_name=code, last_name="Student", external_id=f"{code}-STU")
+        first_name, last_name = tc_student_names[tc]
+        student = create_student_if_missing(
+            db=db,
+            first_name=first_name,
+            last_name=last_name,
+            external_id=f"{code}-STU",
+        )
         associate_student_school_if_missing(db=db, student_id=student.id, school_id=tc_school.id)
 
         if tc == 1:
