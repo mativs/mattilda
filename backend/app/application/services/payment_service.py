@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.application.errors import NotFoundError, ValidationError
+from app.application.services.student_balance_service import invalidate_student_balance_cache
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
 from app.infrastructure.db.models import Charge, Invoice, Payment, Student, StudentSchool, UserStudent
@@ -89,6 +90,7 @@ def create_payment(db: Session, *, school_id: int, payload: PaymentCreate) -> Pa
     db.flush()
     _allocate_payment_to_invoice(db=db, invoice=invoice, payment=payment)
     db.refresh(payment)
+    invalidate_student_balance_cache(school_id=school_id, student_id=payload.student_id)
     return payment
 
 

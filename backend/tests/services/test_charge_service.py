@@ -264,6 +264,33 @@ def test_update_charge_raises_not_found_for_invalid_fee_definition(db_session):
     assert str(exc.value) == "Fee definition not found"
 
 
+def test_update_charge_allows_moving_charge_to_another_student_in_same_school(db_session):
+    """
+    Validate update_charge branch when target student changes.
+
+    1. Seed school with two linked students and one charge for first student.
+    2. Call update_charge with second student id once.
+    3. Reload updated charge from database.
+    4. Validate student_id now points to second student.
+    """
+
+    school = create_school(db_session, "Charge Move", "charge-move")
+    first_student = create_student(db_session, "Move", "From", "CHG-STU-011")
+    second_student = create_student(db_session, "Move", "To", "CHG-STU-012")
+    link_student_school(db_session, first_student.id, school.id)
+    link_student_school(db_session, second_student.id, school.id)
+    charge = factory_create_charge(
+        db_session,
+        school_id=school.id,
+        student_id=first_student.id,
+        description="Move charge",
+        amount="18.00",
+        due_date=date(2026, 7, 10),
+    )
+    updated = update_charge(db_session, charge, ChargeUpdate(student_id=second_student.id))
+    assert updated.student_id == second_student.id
+
+
 def test_delete_charge_sets_soft_delete_and_cancelled_status(db_session):
     """
     Validate delete_charge soft-delete behavior.

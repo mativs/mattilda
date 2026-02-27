@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.application.errors import NotFoundError
+from app.application.services.student_balance_service import invalidate_student_balance_cache
 from app.domain.charge_enums import ChargeStatus
 from app.infrastructure.db.models import Charge, FeeDefinition, Student, StudentSchool
 from app.interfaces.api.v1.schemas.charge import ChargeCreate, ChargeUpdate
@@ -92,10 +93,12 @@ def create_charge(db: Session, school_id: int, payload: ChargeCreate) -> Charge:
     db.add(charge)
     db.commit()
     db.refresh(charge)
+    invalidate_student_balance_cache(school_id=school_id, student_id=charge.student_id)
     return charge
 
 
 def update_charge(db: Session, charge: Charge, payload: ChargeUpdate) -> Charge:
+    previous_student_id = charge.student_id
     next_student_id = payload.student_id if payload.student_id is not None else charge.student_id
     if payload.student_id is not None:
         get_student_in_school(db=db, student_id=next_student_id, school_id=charge.school_id)
@@ -123,6 +126,9 @@ def update_charge(db: Session, charge: Charge, payload: ChargeUpdate) -> Charge:
 
     db.commit()
     db.refresh(charge)
+    invalidate_student_balance_cache(school_id=charge.school_id, student_id=previous_student_id)
+    if charge.student_id != previous_student_id:
+        invalidate_student_balance_cache(school_id=charge.school_id, student_id=charge.student_id)
     return charge
 
 
@@ -130,6 +136,7 @@ def delete_charge(db: Session, charge: Charge) -> None:
     charge.deleted_at = datetime.now(timezone.utc)
     charge.status = ChargeStatus.cancelled
     db.commit()
+    invalidate_student_balance_cache(school_id=charge.school_id, student_id=charge.student_id)
 
 
 def get_unpaid_charges_for_student(db: Session, school_id: int, student_id: int) -> tuple[list[Charge], Decimal]:

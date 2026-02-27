@@ -48,3 +48,21 @@ If dataset size or latency requirements increase, the next optimization step is 
 Payments can be partial and may not settle the full invoice amount in a single transaction. In this scope, the seed data intentionally includes both full and partial invoice payments to exercise historical reporting and visibility flows.
 
 Interest accrues only on fee charges. Unpaid interest charges do not compound.
+
+## Cache and locking decisions
+
+Three optimizations were evaluated for value versus implementation complexity:
+
+- Student balance cache
+- Active invoice cache
+- Payment double-submit lock
+
+### Implemented now
+
+**Student balance cache (`student_balance:{school_id}:{student_id}`).** Student financial summary totals are cached for a short TTL and invalidated on any write that changes balance semantics (`charge` create/update/delete, invoice generation, payment creation). The design is fail-safe: if Redis is unavailable, reads fall back to DB and writes are skipped without breaking requests.
+
+**Payment creation lock (`payment_lock:{school_id}:{invoice_id}`).** A short-lived Redis lock is taken before creating a payment so duplicate submits cannot process concurrently for the same invoice. Lock contention returns `409 Conflict`.
+
+### Deferred
+
+**Active invoice cache deferred.** In this scope, active-invoice queries are not the main bottleneck and introducing a second cache domain increases invalidation complexity. It can be added later if query volume or latency indicates clear value.

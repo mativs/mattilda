@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from contextlib import contextmanager
 
 from tests.helpers.auth import school_header, token_for_user
 from tests.helpers.factories import (
@@ -130,6 +131,48 @@ def test_create_payment_returns_400_for_invoice_student_mismatch(client, seeded_
         },
     )
     assert response.status_code == 400
+
+
+def test_create_payment_returns_409_when_invoice_lock_is_contended(client, seeded_users, db_session, monkeypatch):
+    """
+    Validate payment creation returns conflict when lock cannot be acquired.
+
+    1. Seed one open invoice for a visible student in active school.
+    2. Mock payment lock context manager to raise lock contention.
+    3. Call create payment endpoint once as admin.
+    4. Validate endpoint responds with 409 conflict.
+    """
+
+    invoice = create_invoice(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_one"].id,
+        period="2026-03",
+        issued_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 3, 20),
+        total_amount="150.00",
+    )
+
+    @contextmanager
+    def _raise_conflict(*, school_id: int, invoice_id: int):
+        from app.application.errors import ConflictError
+
+        raise ConflictError("A payment is already being processed for this invoice")
+        yield
+
+    monkeypatch.setattr("app.interfaces.api.v1.routes.payments.payment_creation_lock", _raise_conflict)
+    response = client.post(
+        "/api/v1/payments",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={
+            "student_id": seeded_users["child_one"].id,
+            "invoice_id": invoice.id,
+            "amount": "75.00",
+            "paid_at": "2026-03-08T12:00:00Z",
+            "method": "transfer",
+        },
+    )
+    assert response.status_code == 409
 
 
 def test_get_student_payments_returns_paginated_envelope_for_admin(client, seeded_users, db_session):

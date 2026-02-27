@@ -3,6 +3,7 @@ from sqlalchemy import String, cast
 from sqlalchemy.orm import Session
 
 from app.application.services.pagination_service import paginate_scalars
+from app.application.services.payment_lock_service import payment_creation_lock
 from app.application.services.payment_service import (
     build_visible_payments_query_for_student,
     create_payment,
@@ -37,7 +38,8 @@ def create_payment_endpoint(
     school_id: int = Depends(get_current_school_id),
     db: Session = Depends(get_db),
 ):
-    payment = create_payment(db=db, school_id=school_id, payload=payload)
+    with payment_creation_lock(school_id=school_id, invoice_id=payload.invoice_id):
+        payment = create_payment(db=db, school_id=school_id, payload=payload)
     return serialize_payment_response(payment)
 
 

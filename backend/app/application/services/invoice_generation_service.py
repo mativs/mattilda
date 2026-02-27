@@ -4,6 +4,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.application.services.student_balance_service import invalidate_student_balance_cache
 from app.application.errors import ValidationError
 from app.application.services.charge_service import get_student_in_school
 from app.domain.charge_enums import ChargeStatus, ChargeType
@@ -154,4 +155,5 @@ def generate_invoice_for_student(
     )
     db.commit()
     db.refresh(invoice)
+    invalidate_student_balance_cache(school_id=school_id, student_id=student_id)
     return invoice
