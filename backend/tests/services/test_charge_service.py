@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -10,7 +10,7 @@ from app.application.services.charge_service import (
     get_charge_by_id,
     get_fee_definition_in_school,
     get_student_in_school,
-    get_unbilled_charges_for_student,
+    get_unpaid_charges_for_student,
     serialize_charge_response,
     update_charge,
 )
@@ -90,15 +90,16 @@ def test_create_charge_persists_charge_without_fee_definition(db_session):
             description="Manual adjustment",
             amount=Decimal("12.50"),
             period=None,
+            debt_created_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
             due_date=date(2026, 3, 20),
             charge_type=ChargeType.penalty,
-            status=ChargeStatus.unbilled,
+            status=ChargeStatus.unpaid,
         ),
     )
     assert created.description == "Manual adjustment"
     assert created.fee_definition_id is None
     assert created.charge_type == ChargeType.penalty
-    assert created.status == ChargeStatus.unbilled
+    assert created.status == ChargeStatus.unpaid
 
 
 def test_create_charge_raises_not_found_for_missing_student(db_session):
@@ -121,9 +122,10 @@ def test_create_charge_raises_not_found_for_missing_student(db_session):
                 description="Invalid student",
                 amount=Decimal("10.00"),
                 period=None,
+                debt_created_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
                 due_date=date(2026, 4, 1),
                 charge_type=ChargeType.fee,
-                status=ChargeStatus.unbilled,
+                status=ChargeStatus.unpaid,
             ),
         )
     assert str(exc.value) == "Student not found"
@@ -151,9 +153,10 @@ def test_create_charge_raises_not_found_for_missing_fee_definition(db_session):
                 description="Unknown fee",
                 amount=Decimal("22.00"),
                 period=None,
+                debt_created_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
                 due_date=date(2026, 4, 3),
                 charge_type=ChargeType.fee,
-                status=ChargeStatus.unbilled,
+                status=ChargeStatus.unpaid,
             ),
         )
     assert str(exc.value) == "Fee definition not found"
@@ -222,9 +225,10 @@ def test_update_charge_updates_all_mutable_fields(db_session):
             description="New description",
             amount=Decimal("55.00"),
             period="2026-05",
+            debt_created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
             due_date=date(2026, 5, 20),
             charge_type=ChargeType.interest,
-            status=ChargeStatus.billed,
+            status=ChargeStatus.paid,
         ),
     )
     assert updated.description == "New description"
@@ -232,7 +236,7 @@ def test_update_charge_updates_all_mutable_fields(db_session):
     assert updated.period == "2026-05"
     assert updated.due_date == date(2026, 5, 20)
     assert updated.charge_type == ChargeType.interest
-    assert updated.status == ChargeStatus.billed
+    assert updated.status == ChargeStatus.paid
 
 
 def test_update_charge_raises_not_found_for_invalid_fee_definition(db_session):
@@ -285,14 +289,14 @@ def test_delete_charge_sets_soft_delete_and_cancelled_status(db_session):
     assert charge.status == ChargeStatus.cancelled
 
 
-def test_get_unbilled_charges_for_student_returns_items_and_total(db_session):
+def test_get_unpaid_charges_for_student_returns_items_and_total(db_session):
     """
-    Validate get_unbilled_charges_for_student total calculation.
+    Validate get_unpaid_charges_for_student total calculation.
 
     1. Seed school, student, and mixed-status charges.
-    2. Call get_unbilled_charges_for_student once.
-    3. Validate only unbilled charges are included.
-    4. Validate total_unbilled matches sum of included charges.
+    2. Call get_unpaid_charges_for_student once.
+    3. Validate only unpaid charges are included.
+    4. Validate total unpaid matches sum of included charges.
     """
     school = create_school(db_session, "Charge Totals", "charge-totals")
     student = create_student(db_session, "Total", "Kid", "CHG-STU-009")
@@ -301,30 +305,30 @@ def test_get_unbilled_charges_for_student_returns_items_and_total(db_session):
         db_session,
         school_id=school.id,
         student_id=student.id,
-        description="Unbilled A",
+        description="Unpaid A",
         amount="10.00",
         due_date=date(2026, 7, 1),
-        status=ChargeStatus.unbilled,
+        status=ChargeStatus.unpaid,
     )
     factory_create_charge(
         db_session,
         school_id=school.id,
         student_id=student.id,
-        description="Billed B",
+        description="Paid B",
         amount="20.00",
         due_date=date(2026, 7, 2),
-        status=ChargeStatus.billed,
+        status=ChargeStatus.paid,
     )
     factory_create_charge(
         db_session,
         school_id=school.id,
         student_id=student.id,
-        description="Unbilled C",
+        description="Unpaid C",
         amount="5.50",
         due_date=date(2026, 7, 3),
-        status=ChargeStatus.unbilled,
+        status=ChargeStatus.unpaid,
     )
-    charges, total = get_unbilled_charges_for_student(db_session, school.id, student.id)
+    charges, total = get_unpaid_charges_for_student(db_session, school.id, student.id)
     assert len(charges) == 2
     assert total == Decimal("15.50")
 

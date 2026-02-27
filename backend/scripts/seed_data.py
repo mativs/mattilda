@@ -138,6 +138,7 @@ def create_charge_if_missing(
     description: str,
     amount: Decimal,
     period: str | None,
+    debt_created_at: datetime,
     due_date: date,
     charge_type: ChargeType,
     status: ChargeStatus,
@@ -161,6 +162,7 @@ def create_charge_if_missing(
         description=description,
         amount=amount,
         period=period,
+        debt_created_at=debt_created_at,
         due_date=due_date,
         charge_type=charge_type,
         status=status,
@@ -284,6 +286,15 @@ def _period_label(period_start: date) -> str:
     return f"{period_start.year:04d}-{period_start.month:02d}"
 
 
+def _month_date(period_start: date, day: int) -> date:
+    safe_day = min(day, 28)
+    return date(period_start.year, period_start.month, safe_day)
+
+
+def _month_datetime(period_start: date, day: int, hour: int = 9, minute: int = 0) -> datetime:
+    return datetime(period_start.year, period_start.month, min(day, 28), hour, minute, tzinfo=timezone.utc)
+
+
 def seed_billing_history_for_student_school(
     db: Session,
     *,
@@ -310,9 +321,10 @@ def seed_billing_history_for_student_school(
             description=description,
             amount=monthly_amount,
             period=period,
+            debt_created_at=issued_at,
             due_date=due_date,
             charge_type=ChargeType.fee,
-            status=ChargeStatus.billed,
+            status=ChargeStatus.paid,
         )
         invoice = create_invoice_if_missing(
             db=db,
@@ -333,9 +345,9 @@ def seed_billing_history_for_student_school(
             charge_type=charge.charge_type,
         )
         invoice.total_amount = sum((item.amount for item in invoice.items), Decimal("0.00"))
-        charge.status = ChargeStatus.billed
+        charge.status = ChargeStatus.paid
         charge.invoice_id = invoice.id
-        charge.origin_invoice_id = invoice.id
+        charge.origin_charge_id = None
         create_payment_if_missing(
             db=db,
             school_id=school.id,
@@ -356,9 +368,10 @@ def seed_billing_history_for_student_school(
         description=f"{monthly_fee.name} {current_label} (pending)",
         amount=monthly_amount,
         period=current_label,
+        debt_created_at=datetime(current_period.year, current_period.month, 1, 9, 0, tzinfo=timezone.utc),
         due_date=current_due_date,
         charge_type=ChargeType.fee,
-        status=ChargeStatus.unbilled,
+        status=ChargeStatus.unpaid,
     )
 
     partial_amount = (monthly_amount / Decimal("2")).quantize(Decimal("0.01"))
@@ -367,12 +380,13 @@ def seed_billing_history_for_student_school(
         school_id=school.id,
         student_id=student.id,
         fee_definition_id=monthly_fee.id,
-        description=f"{monthly_fee.name} {current_label} (partial billed)",
+        description=f"{monthly_fee.name} {current_label} (partial paid)",
         amount=partial_amount,
         period=current_label,
+        debt_created_at=datetime(current_period.year, current_period.month, 1, 9, 0, tzinfo=timezone.utc),
         due_date=current_due_date,
         charge_type=ChargeType.fee,
-        status=ChargeStatus.billed,
+        status=ChargeStatus.paid,
     )
     open_invoice = create_invoice_if_missing(
         db=db,
@@ -393,9 +407,9 @@ def seed_billing_history_for_student_school(
         charge_type=partial_charge.charge_type,
     )
     open_invoice.total_amount = sum((item.amount for item in open_invoice.items), Decimal("0.00"))
-    partial_charge.status = ChargeStatus.billed
+    partial_charge.status = ChargeStatus.paid
     partial_charge.invoice_id = open_invoice.id
-    partial_charge.origin_invoice_id = open_invoice.id
+    partial_charge.origin_charge_id = None
     create_payment_if_missing(
         db=db,
         school_id=school.id,
@@ -405,6 +419,489 @@ def seed_billing_history_for_student_school(
         paid_at=datetime(current_period.year, current_period.month, 8, 12, 0, tzinfo=timezone.utc),
         method=payment_methods[0],
     )
+
+
+def _attach_invoice_snapshot(db: Session, *, invoice: Invoice, charges: list[Charge]) -> None:
+    for charge in charges:
+        if charge.invoice_id != invoice.id:
+            charge.invoice_id = invoice.id
+        create_invoice_item_if_missing(
+            db=db,
+            invoice_id=invoice.id,
+            charge_id=charge.id,
+            description=charge.description,
+            amount=charge.amount,
+            charge_type=charge.charge_type,
+        )
+    invoice.total_amount = sum((charge.amount for charge in charges), Decimal("0.00"))
+
+
+def seed_tc_lab_fixtures(db: Session, *, admin: User) -> None:
+    """
+    Seed deterministic manual fixtures for TC-01..TC-15 under tc-lab school.
+    """
+    tc_school = create_school_if_missing(db=db, name="TC Lab", slug="tc-lab")
+    create_membership_if_missing(db=db, user_id=admin.id, school_id=tc_school.id, role=UserRole.admin)
+    tc_monthly_fee = create_fee_if_missing(
+        db=db,
+        school_id=tc_school.id,
+        name="TC Fee",
+        amount=Decimal("100.00"),
+        recurrence=FeeRecurrence.monthly,
+    )
+
+    # Mapping:
+    # TC-01..TC-06 -> payment allocation baselines (open invoices)
+    # TC-07..TC-10 -> interest generation baselines
+    # TC-11..TC-13 -> overpayment/negative/overdue payment baselines
+    # TC-14..TC-15 -> repeated invoice generation baselines
+    tc_anchor = date.today().replace(day=1)
+    payable_month = _add_months(tc_anchor, 1)
+    overdue_month = _add_months(tc_anchor, -2)
+    recent_past_month = _add_months(tc_anchor, -1)
+
+    payable_period = _period_label(payable_month)
+    overdue_period = _period_label(overdue_month)
+    recent_past_period = _period_label(recent_past_month)
+
+    payable_due_date = _month_date(payable_month, 10)
+    overdue_due_date = _month_date(overdue_month, 10)
+
+    for tc in range(1, 16):
+        code = f"TC-{tc:02d}"
+        student = create_student_if_missing(db=db, first_name=code, last_name="Student", external_id=f"{code}-STU")
+        associate_student_school_if_missing(db=db, student_id=student.id, school_id=tc_school.id)
+
+        if tc == 1:
+            charge = create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-01 fee",
+                amount=Decimal("100.00"),
+                period=payable_period,
+                debt_created_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.unpaid,
+            )
+            invoice = create_invoice_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                period=payable_period,
+                issued_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                total_amount=Decimal("100.00"),
+                status=InvoiceStatus.open,
+            )
+            _attach_invoice_snapshot(db=db, invoice=invoice, charges=[charge])
+
+        if tc == 2:
+            charge_a = create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-02 fee",
+                amount=Decimal("100.00"),
+                period=payable_period,
+                debt_created_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.unpaid,
+            )
+            charge_b = create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=None,
+                description="TC-02 penalty",
+                amount=Decimal("50.00"),
+                period=payable_period,
+                debt_created_at=_month_datetime(payable_month, 2),
+                due_date=payable_due_date,
+                charge_type=ChargeType.penalty,
+                status=ChargeStatus.unpaid,
+            )
+            invoice = create_invoice_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                period=payable_period,
+                issued_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                total_amount=Decimal("150.00"),
+                status=InvoiceStatus.open,
+            )
+            _attach_invoice_snapshot(db=db, invoice=invoice, charges=[charge_a, charge_b])
+
+        if tc == 3:
+            charge = create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-03 fee",
+                amount=Decimal("100.00"),
+                period=payable_period,
+                debt_created_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.unpaid,
+            )
+            invoice = create_invoice_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                period=payable_period,
+                issued_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                total_amount=Decimal("100.00"),
+                status=InvoiceStatus.open,
+            )
+            _attach_invoice_snapshot(db=db, invoice=invoice, charges=[charge])
+
+        if tc == 4:
+            charge = create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-04 fee",
+                amount=Decimal("100.00"),
+                period=payable_period,
+                debt_created_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.unpaid,
+            )
+            invoice = create_invoice_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                period=payable_period,
+                issued_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                total_amount=Decimal("100.00"),
+                status=InvoiceStatus.open,
+            )
+            _attach_invoice_snapshot(db=db, invoice=invoice, charges=[charge])
+
+        if tc == 5:
+            charges = [
+                create_charge_if_missing(
+                    db=db,
+                    school_id=tc_school.id,
+                    student_id=student.id,
+                    fee_definition_id=tc_monthly_fee.id,
+                    description="TC-05 charge A",
+                    amount=Decimal("100.00"),
+                    period=payable_period,
+                    debt_created_at=_month_datetime(payable_month, 1),
+                    due_date=payable_due_date,
+                    charge_type=ChargeType.fee,
+                    status=ChargeStatus.unpaid,
+                ),
+                create_charge_if_missing(
+                    db=db,
+                    school_id=tc_school.id,
+                    student_id=student.id,
+                    fee_definition_id=tc_monthly_fee.id,
+                    description="TC-05 charge B",
+                    amount=Decimal("50.00"),
+                    period=payable_period,
+                    debt_created_at=_month_datetime(payable_month, 2),
+                    due_date=payable_due_date,
+                    charge_type=ChargeType.fee,
+                    status=ChargeStatus.unpaid,
+                ),
+                create_charge_if_missing(
+                    db=db,
+                    school_id=tc_school.id,
+                    student_id=student.id,
+                    fee_definition_id=None,
+                    description="TC-05 charge C",
+                    amount=Decimal("30.00"),
+                    period=payable_period,
+                    debt_created_at=_month_datetime(payable_month, 3),
+                    due_date=payable_due_date,
+                    charge_type=ChargeType.penalty,
+                    status=ChargeStatus.unpaid,
+                ),
+            ]
+            invoice = create_invoice_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                period=payable_period,
+                issued_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                total_amount=Decimal("180.00"),
+                status=InvoiceStatus.open,
+            )
+            _attach_invoice_snapshot(db=db, invoice=invoice, charges=charges)
+
+        if tc == 6:
+            charges = [
+                create_charge_if_missing(
+                    db=db,
+                    school_id=tc_school.id,
+                    student_id=student.id,
+                    fee_definition_id=tc_monthly_fee.id,
+                    description="TC-06 charge A",
+                    amount=Decimal("100.00"),
+                    period=payable_period,
+                    debt_created_at=_month_datetime(payable_month, 1),
+                    due_date=payable_due_date,
+                    charge_type=ChargeType.fee,
+                    status=ChargeStatus.unpaid,
+                ),
+                create_charge_if_missing(
+                    db=db,
+                    school_id=tc_school.id,
+                    student_id=student.id,
+                    fee_definition_id=tc_monthly_fee.id,
+                    description="TC-06 charge B",
+                    amount=Decimal("100.00"),
+                    period=payable_period,
+                    debt_created_at=_month_datetime(payable_month, 2),
+                    due_date=payable_due_date,
+                    charge_type=ChargeType.fee,
+                    status=ChargeStatus.unpaid,
+                ),
+            ]
+            invoice = create_invoice_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                period=payable_period,
+                issued_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                total_amount=Decimal("200.00"),
+                status=InvoiceStatus.open,
+            )
+            _attach_invoice_snapshot(db=db, invoice=invoice, charges=charges)
+
+        if tc == 7:
+            create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-07 overdue fee",
+                amount=Decimal("100.00"),
+                period=overdue_period,
+                debt_created_at=_month_datetime(overdue_month, 1),
+                due_date=overdue_due_date,
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.unpaid,
+            )
+
+        if tc == 8:
+            base_fee = create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-08 overdue fee",
+                amount=Decimal("100.00"),
+                period=overdue_period,
+                debt_created_at=_month_datetime(overdue_month, 1),
+                due_date=_month_date(overdue_month, 1),
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.unpaid,
+            )
+            existing_interest = db.execute(
+                select(Charge).where(
+                    Charge.school_id == tc_school.id,
+                    Charge.student_id == student.id,
+                    Charge.description == "TC-08 existing interest",
+                    Charge.deleted_at.is_(None),
+                )
+            ).scalar_one_or_none()
+            if existing_interest is None:
+                db.add(
+                    Charge(
+                        school_id=tc_school.id,
+                        student_id=student.id,
+                        fee_definition_id=None,
+                        invoice_id=None,
+                        origin_charge_id=base_fee.id,
+                        description="TC-08 existing interest",
+                        amount=Decimal("2.00"),
+                        period=recent_past_period,
+                        debt_created_at=_month_datetime(recent_past_month, 1),
+                        due_date=_month_date(recent_past_month, 1),
+                        charge_type=ChargeType.interest,
+                        status=ChargeStatus.unpaid,
+                    )
+                )
+
+        if tc == 9:
+            create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=None,
+                description="TC-09 overdue interest",
+                amount=Decimal("10.00"),
+                period=overdue_period,
+                debt_created_at=_month_datetime(overdue_month, 1),
+                due_date=overdue_due_date,
+                charge_type=ChargeType.interest,
+                status=ChargeStatus.unpaid,
+            )
+
+        if tc == 10:
+            create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-10 fee paid",
+                amount=Decimal("100.00"),
+                period=recent_past_period,
+                debt_created_at=_month_datetime(recent_past_month, 1),
+                due_date=_month_date(recent_past_month, 10),
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.paid,
+            )
+            create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=None,
+                description="TC-10 interest unpaid",
+                amount=Decimal("10.00"),
+                period=recent_past_period,
+                debt_created_at=_month_datetime(recent_past_month, 11),
+                due_date=_month_date(recent_past_month, 11),
+                charge_type=ChargeType.interest,
+                status=ChargeStatus.unpaid,
+            )
+
+        if tc == 11:
+            charge = create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-11 fee",
+                amount=Decimal("100.00"),
+                period=payable_period,
+                debt_created_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.unpaid,
+            )
+            invoice = create_invoice_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                period=payable_period,
+                issued_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                total_amount=Decimal("100.00"),
+                status=InvoiceStatus.open,
+            )
+            _attach_invoice_snapshot(db=db, invoice=invoice, charges=[charge])
+
+        if tc == 12:
+            fee_charge = create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-12 fee",
+                amount=Decimal("100.00"),
+                period=payable_period,
+                debt_created_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.unpaid,
+            )
+            carry_charge = create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=None,
+                description="TC-12 carry",
+                amount=Decimal("-20.00"),
+                period=payable_period,
+                debt_created_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                charge_type=ChargeType.penalty,
+                status=ChargeStatus.unpaid,
+            )
+            invoice = create_invoice_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                period=payable_period,
+                issued_at=_month_datetime(payable_month, 1),
+                due_date=payable_due_date,
+                total_amount=Decimal("80.00"),
+                status=InvoiceStatus.open,
+            )
+            _attach_invoice_snapshot(db=db, invoice=invoice, charges=[fee_charge, carry_charge])
+
+        if tc == 13:
+            charge = create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-13 overdue fee",
+                amount=Decimal("100.00"),
+                period=overdue_period,
+                debt_created_at=_month_datetime(overdue_month, 1),
+                due_date=overdue_due_date,
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.unpaid,
+            )
+            invoice = create_invoice_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                period=overdue_period,
+                issued_at=_month_datetime(overdue_month, 1),
+                due_date=overdue_due_date,
+                total_amount=Decimal("100.00"),
+                status=InvoiceStatus.open,
+            )
+            _attach_invoice_snapshot(db=db, invoice=invoice, charges=[charge])
+
+        if tc == 14:
+            create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-14 fee",
+                amount=Decimal("100.00"),
+                period=recent_past_period,
+                debt_created_at=_month_datetime(recent_past_month, 1),
+                due_date=_month_date(recent_past_month, 10),
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.unpaid,
+            )
+
+        if tc == 15:
+            create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-15 charge A",
+                amount=Decimal("100.00"),
+                period=recent_past_period,
+                debt_created_at=_month_datetime(recent_past_month, 1),
+                due_date=_month_date(recent_past_month, 10),
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.unpaid,
+            )
 
 
 def main() -> None:
@@ -490,6 +987,7 @@ def main() -> None:
                 monthly_amount=amount,
                 periods=periods,
             )
+        seed_tc_lab_fixtures(db=db, admin=admin)
 
         db.commit()
     finally:

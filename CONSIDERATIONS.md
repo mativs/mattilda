@@ -46,3 +46,5 @@ If dataset size or latency requirements increase, the next optimization step is 
 ## Payment considerations
 
 Payments can be partial and may not settle the full invoice amount in a single transaction. In this scope, the seed data intentionally includes both full and partial invoice payments to exercise historical reporting and visibility flows.
+
+Interest accrues only on fee charges. Unpaid interest charges do not compound.

@@ -219,11 +219,12 @@ class Charge(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
     invoice_id: Mapped[int | None] = mapped_column(
         ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    origin_invoice_id: Mapped[int | None] = mapped_column(
-        ForeignKey("invoices.id", ondelete="SET NULL"),
+    origin_charge_id: Mapped[int | None] = mapped_column(
+        ForeignKey("charges.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
+    debt_created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     period: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -232,7 +233,7 @@ class Charge(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
     status: Mapped[ChargeStatus] = mapped_column(
         Enum(ChargeStatus, name="charge_status"),
         nullable=False,
-        default=ChargeStatus.unbilled,
+        default=ChargeStatus.unpaid,
         index=True,
     )
 
@@ -244,7 +245,7 @@ class Charge(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
         foreign_keys=[invoice_id],
         back_populates="charges",
     )
-    origin_invoice: Mapped["Invoice | None"] = relationship("Invoice", foreign_keys=[origin_invoice_id])
+    origin_charge: Mapped["Charge | None"] = relationship("Charge", remote_side=[id], foreign_keys=[origin_charge_id])
 
 
 class Invoice(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):

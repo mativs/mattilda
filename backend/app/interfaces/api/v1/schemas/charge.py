@@ -13,9 +13,10 @@ class ChargeBase(BaseModel):
     description: str
     amount: Decimal
     period: str | None = None
+    debt_created_at: datetime
     due_date: date
     charge_type: ChargeType
-    status: ChargeStatus = ChargeStatus.unbilled
+    status: ChargeStatus = ChargeStatus.unpaid
 
 
 class ChargeCreate(ChargeBase):
@@ -28,6 +29,7 @@ class ChargeUpdate(BaseModel):
     description: str | None = None
     amount: Decimal | None = None
     period: str | None = None
+    debt_created_at: datetime | None = None
     due_date: date | None = None
     charge_type: ChargeType | None = None
     status: ChargeStatus | None = None
@@ -45,7 +47,7 @@ class ChargeResponse(ChargeBase):
     id: int
     school_id: int
     invoice_id: int | None = None
-    origin_invoice_id: int | None = None
+    origin_charge_id: int | None = None
     created_at: datetime
     updated_at: datetime
     student: ChargeStudentRef
@@ -56,6 +58,6 @@ class ChargeListResponse(BaseModel):
     pagination: PaginationMeta
 
 
-class StudentUnbilledChargesResponse(BaseModel):
+class StudentUnpaidChargesResponse(BaseModel):
     items: list[ChargeResponse] = Field(default_factory=list)
-    total_unbilled_amount: Decimal = Decimal("0.00")
+    total_unpaid_amount: Decimal = Decimal("0.00")

@@ -175,13 +175,17 @@ Frontend admin association actions for user-school and student-school use the ac
 - `GET /api/v1/charges/{charge_id}` (admin only, `404` if not visible in active school)
 - `PUT /api/v1/charges/{charge_id}` (admin only, updates active-school charge)
 - `DELETE /api/v1/charges/{charge_id}` (admin only, soft delete + status `cancelled`)
-- `GET /api/v1/students/{student_id}/charges/unbilled` (admin only; returns unbilled items and `total_unbilled_amount`)
+- `GET /api/v1/students/{student_id}/charges/unpaid` (admin only; returns unpaid items and `total_unpaid_amount`)
+- Charge status values: `paid`, `unpaid`, `cancelled`
+- Charge type values: `fee`, `interest`, `penalty`
+- `debt_created_at` is required for charge create/update flows
 
 ## Invoice endpoints
 
 - `GET /api/v1/students/{student_id}/invoices` (paginated/searchable summaries only; each row excludes invoice items)
 - `GET /api/v1/invoices/{invoice_id}` (invoice detail with nested `items`)
 - `GET /api/v1/invoices/{invoice_id}/items` (invoice items list; compatibility read endpoint)
+- `POST /api/v1/students/{student_id}/invoices/generate` (admin only; closes existing open invoice, computes interest deltas, and creates a new open invoice from unpaid charges)
 - Visibility rules:
   - school `admin`: can read all invoices from active school
   - non-admin: can read invoices only for students associated to current user in active school
@@ -192,6 +196,11 @@ Frontend admin association actions for user-school and student-school use the ac
 - `POST /api/v1/payments` (admin only, active school-scoped)
 - `GET /api/v1/students/{student_id}/payments` (paginated/searchable, visibility-aware)
 - `GET /api/v1/payments/{payment_id}` (visibility-aware)
+- `POST /api/v1/payments` rules:
+  - invoice is required
+  - invoice must be open
+  - overdue invoices are rejected (`400`)
+  - payment allocation marks charges paid/unpaid using deterministic ordering and may split a cutoff charge
 - Visibility rules:
   - school `admin`: can read all payments from active school
   - non-admin: can read payments only for students associated to current user in active school
@@ -206,9 +215,10 @@ Frontend admin association actions for user-school and student-school use the ac
   "description": "Cuota mensual marzo",
   "amount": "150.00",
   "period": "2026-03",
+  "debt_created_at": "2026-03-01T09:00:00Z",
   "due_date": "2026-03-10",
   "charge_type": "fee",
-  "status": "unbilled"
+  "status": "unpaid"
 }
 ```
 
@@ -254,6 +264,7 @@ Frontend admin association actions for user-school and student-school use the ac
   - invoice list with server-side search/pagination
   - invoice detail with nested line items
   - lightweight print action (`window.print`)
+  - admin-only manual invoice generation button
 - Student payments view supports:
   - read-only payment list with server-side search/pagination
   - navigation from student page, sidebar student submenu, and admin configuration student rows
@@ -292,5 +303,15 @@ And also creates:
 - Sample charges per school/student
 - Sample invoices and invoice items (with charge snapshot values)
 - Sample payments (including partial and full payments tied to invoices)
+- `tc-lab` school with `TC-01`..`TC-15` billing fixtures for manual invoice/payment process validation
+
+`tc-lab` quick manual flow:
+
+- Log in as `admin@example.com` / `admin123`
+- Switch school selector to `tc-lab`
+- TC fixture dates are seeded with a rolling month anchor based on the current date, so scenarios stay valid over time
+- Open `Configuration > Students`, search by `TC-XX`, then use `Billing` and `Payments` buttons
+- For generation scenarios (`TC-07`..`TC-10`, `TC-14`, `TC-15`), use the `Generate Invoice` button on billing view
+- For payment scenarios (`TC-01`..`TC-06`, `TC-11`..`TC-13`), create payments against the open invoice and validate charge/invoice transitions
 
 Use the frontend login form at `http://localhost:13000` to verify authenticated session and the dummy home page.

@@ -10,6 +10,7 @@ from app.application.services.invoice_service import (
     serialize_invoice_detail,
     serialize_invoice_summary,
 )
+from app.application.services.invoice_generation_service import generate_invoice_for_student
 from app.application.services.pagination_service import paginate_scalars
 from app.domain.roles import UserRole
 from app.infrastructure.db.models import Invoice, Student, User, UserSchoolRole
@@ -18,12 +19,14 @@ from app.interfaces.api.v1.dependencies.auth import (
     get_current_school_id,
     get_current_school_memberships,
     require_authenticated,
+    require_school_roles,
 )
 from app.interfaces.api.v1.dependencies.pagination import get_pagination_params
 from app.interfaces.api.v1.schemas.invoice import (
     InvoiceDetailResponse,
     InvoiceItemResponse,
     InvoiceListResponse,
+    InvoiceSummaryResponse,
 )
 from app.interfaces.api.v1.schemas.pagination import PaginationParams
 
@@ -110,3 +113,19 @@ def get_invoice_items(
     if items is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
     return items
+
+
+@router.post(
+    "/students/{student_id}/invoices/generate",
+    response_model=InvoiceSummaryResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+)
+def generate_student_invoice(
+    student_id: int,
+    school_id: int = Depends(get_current_school_id),
+    db: Session = Depends(get_db),
+):
+    invoice = generate_invoice_for_student(db=db, school_id=school_id, student_id=student_id)
+    db.refresh(invoice)
+    return serialize_invoice_summary(invoice)

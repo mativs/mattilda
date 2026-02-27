@@ -53,18 +53,51 @@ def test_create_payment_returns_403_for_non_admin(client, seeded_users):
     3. Receive forbidden response.
     4. Validate admin-only create policy is enforced.
     """
+    invoice_id = 1
     response = client.post(
         "/api/v1/payments",
         headers=school_header(token_for_user(seeded_users["teacher"].id), seeded_users["north_school"].id),
         json={
             "student_id": seeded_users["child_one"].id,
-            "invoice_id": None,
+            "invoice_id": invoice_id,
             "amount": "20.00",
             "paid_at": "2026-03-08T12:00:00Z",
             "method": "cash",
         },
     )
     assert response.status_code == 403
+
+
+def test_create_payment_returns_400_for_overdue_invoice(client, seeded_users, db_session):
+    """
+    Validate payment creation rejects overdue invoices.
+
+    1. Seed open invoice with due date before payment timestamp.
+    2. Call create payment endpoint once as admin.
+    3. Receive bad-request response.
+    4. Validate overdue-payment restriction is enforced.
+    """
+    invoice = create_invoice(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_one"].id,
+        period="2026-04",
+        issued_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 4, 10),
+        total_amount="100.00",
+    )
+    response = client.post(
+        "/api/v1/payments",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+        json={
+            "student_id": seeded_users["child_one"].id,
+            "invoice_id": invoice.id,
+            "amount": "10.00",
+            "paid_at": "2026-04-11T10:00:00Z",
+            "method": "card",
+        },
+    )
+    assert response.status_code == 400
 
 
 def test_create_payment_returns_400_for_invoice_student_mismatch(client, seeded_users, db_session):

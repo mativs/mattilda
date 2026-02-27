@@ -1,8 +1,13 @@
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 
 from app.application.errors import NotFoundError, ValidationError
+from app.domain.charge_enums import ChargeStatus, ChargeType
+from app.domain.invoice_status import InvoiceStatus
+from app.infrastructure.db.models import Charge, Invoice
 from app.application.services.payment_service import (
     build_visible_payments_query_for_student,
     create_payment,
@@ -82,32 +87,60 @@ def test_get_invoice_in_school_raises_not_found_for_other_school(db_session):
         get_invoice_in_school(db_session, invoice_id=invoice.id, school_id=school_b.id)
 
 
-def test_create_payment_persists_without_invoice(db_session):
+def test_create_payment_allocates_and_closes_invoice_when_fully_covered(db_session):
     """
-    Validate payment creation works without invoice reference.
+    Validate payment creation fully allocates and closes invoice.
 
-    1. Seed school and linked student.
-    2. Call create payment with nullable invoice_id.
-    3. Validate returned payment fields are persisted.
-    4. Validate invoice_id remains null.
+    1. Seed school, student, open invoice, and one unpaid positive charge.
+    2. Call create payment with enough amount once.
+    3. Validate charge becomes paid and invoice closes.
+    4. Validate payment persists with linked invoice id.
     """
     school = create_school(db_session, "North Create", "north-create-payment")
     student = create_student(db_session, "Create", "Pay", "PAY-STU-004")
     link_student_school(db_session, student.id, school.id)
+    invoice = create_invoice(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        period="2026-03",
+        issued_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 3, 31),
+        total_amount="40.00",
+        status=InvoiceStatus.open,
+    )
+    charge = Charge(
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=invoice.id,
+        fee_definition_id=None,
+        origin_charge_id=None,
+        description="Base debt",
+        amount=Decimal("40.00"),
+        period="2026-03",
+        debt_created_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 3, 10),
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.unpaid,
+    )
+    db_session.add(charge)
+    db_session.commit()
     created = create_payment(
         db_session,
         school_id=school.id,
         payload=PaymentCreate(
             student_id=student.id,
-            invoice_id=None,
+            invoice_id=invoice.id,
             amount="40.00",
             paid_at=datetime(2026, 3, 12, tzinfo=timezone.utc),
             method="cash",
         ),
     )
-    assert created.student_id == student.id
-    assert created.invoice_id is None
-    assert str(created.amount) == "40.00"
+    refreshed_charge = db_session.get(Charge, charge.id)
+    refreshed_invoice = db_session.get(Invoice, invoice.id)
+    assert created.invoice_id == invoice.id
+    assert refreshed_charge is not None and refreshed_charge.status == ChargeStatus.paid
+    assert refreshed_invoice is not None and refreshed_invoice.status == InvoiceStatus.closed
 
 
 def test_create_payment_raises_validation_when_invoice_mismatches_student(db_session):
@@ -148,6 +181,408 @@ def test_create_payment_raises_validation_when_invoice_mismatches_student(db_ses
     assert str(exc.value) == "Invoice does not belong to student"
 
 
+def test_create_payment_raises_validation_for_overdue_invoice(db_session):
+    """
+    Validate payment creation rejects overdue invoices.
+
+    1. Seed school, student, and open overdue invoice.
+    2. Call create payment once with paid_at after due date.
+    3. Validate service raises ValidationError.
+    4. Validate message indicates overdue restriction.
+    """
+    school = create_school(db_session, "North Overdue", "north-overdue-payment")
+    student = create_student(db_session, "Late", "Pay", "PAY-STU-009")
+    link_student_school(db_session, student.id, school.id)
+    invoice = create_invoice(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        period="2026-04",
+        issued_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 4, 10),
+        total_amount="50.00",
+        status=InvoiceStatus.open,
+    )
+    with pytest.raises(ValidationError) as exc:
+        create_payment(
+            db_session,
+            school_id=school.id,
+            payload=PaymentCreate(
+                student_id=student.id,
+                invoice_id=invoice.id,
+                amount="10.00",
+                paid_at=datetime(2026, 4, 11, tzinfo=timezone.utc),
+                method="transfer",
+            ),
+        )
+    assert str(exc.value) == "Overdue invoices cannot receive payments"
+
+
+def test_create_payment_raises_validation_for_closed_invoice(db_session):
+    """
+    Validate payment creation rejects non-open invoices.
+
+    1. Seed school, student, and closed invoice.
+    2. Call create payment once for closed invoice.
+    3. Validate service raises ValidationError.
+    4. Validate message indicates only open invoices are payable.
+    """
+    school = create_school(db_session, "North Closed", "north-closed-payment")
+    student = create_student(db_session, "Closed", "Pay", "PAY-STU-011")
+    link_student_school(db_session, student.id, school.id)
+    invoice = create_invoice(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        period="2026-04",
+        issued_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 4, 20),
+        total_amount="50.00",
+        status=InvoiceStatus.closed,
+    )
+    with pytest.raises(ValidationError) as exc:
+        create_payment(
+            db_session,
+            school_id=school.id,
+            payload=PaymentCreate(
+                student_id=student.id,
+                invoice_id=invoice.id,
+                amount="10.00",
+                paid_at=datetime(2026, 4, 10, tzinfo=timezone.utc),
+                method="transfer",
+            ),
+        )
+    assert str(exc.value) == "Only open invoices can receive payments"
+
+
+def test_create_payment_marks_all_positive_charges_paid_when_fully_covered(db_session):
+    """
+    Validate full coverage branch marks all positive charges as paid.
+
+    1. Seed open invoice with two unpaid positive charges.
+    2. Create payment amount greater than total positives.
+    3. Reload both charges from database.
+    4. Validate both charges are marked paid.
+    """
+    school = create_school(db_session, "North Full", "north-full-payment")
+    student = create_student(db_session, "Full", "Pay", "PAY-STU-012")
+    link_student_school(db_session, student.id, school.id)
+    invoice = create_invoice(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        period="2026-05",
+        issued_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 5, 30),
+        total_amount="30.00",
+        status=InvoiceStatus.open,
+    )
+    first = Charge(
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=invoice.id,
+        fee_definition_id=None,
+        origin_charge_id=None,
+        description="Charge A",
+        amount=Decimal("10.00"),
+        period="2026-05",
+        debt_created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 5, 5),
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.unpaid,
+    )
+    second = Charge(
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=invoice.id,
+        fee_definition_id=None,
+        origin_charge_id=None,
+        description="Charge B",
+        amount=Decimal("20.00"),
+        period="2026-05",
+        debt_created_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
+        due_date=date(2026, 5, 6),
+        charge_type=ChargeType.penalty,
+        status=ChargeStatus.unpaid,
+    )
+    db_session.add_all([first, second])
+    db_session.commit()
+
+    create_payment(
+        db_session,
+        school_id=school.id,
+        payload=PaymentCreate(
+            student_id=student.id,
+            invoice_id=invoice.id,
+            amount="50.00",
+            paid_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
+            method="cash",
+        ),
+    )
+    assert db_session.get(Charge, first.id).status == ChargeStatus.paid
+    assert db_session.get(Charge, second.id).status == ChargeStatus.paid
+
+
+def test_create_payment_splits_charge_on_partial_cutoff(db_session):
+    """
+    Validate payment allocation splits cutoff charge on partial payment.
+
+    1. Seed open invoice with one unpaid charge amount 100.00.
+    2. Create payment for 30.00 once.
+    3. Validate source charge marked paid.
+    4. Validate residual unpaid charge is created with origin reference.
+    """
+    school = create_school(db_session, "North Split", "north-split-payment")
+    student = create_student(db_session, "Split", "Pay", "PAY-STU-010")
+    link_student_school(db_session, student.id, school.id)
+    invoice = create_invoice(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        period="2026-05",
+        issued_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 5, 31),
+        total_amount="100.00",
+        status=InvoiceStatus.open,
+    )
+    source = Charge(
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=invoice.id,
+        fee_definition_id=None,
+        origin_charge_id=None,
+        description="Source debt",
+        amount=Decimal("100.00"),
+        period="2026-05",
+        debt_created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 5, 10),
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.unpaid,
+    )
+    db_session.add(source)
+    db_session.commit()
+
+    create_payment(
+        db_session,
+        school_id=school.id,
+        payload=PaymentCreate(
+            student_id=student.id,
+            invoice_id=invoice.id,
+            amount="30.00",
+            paid_at=datetime(2026, 5, 12, tzinfo=timezone.utc),
+            method="transfer",
+        ),
+    )
+    refreshed_source = db_session.get(Charge, source.id)
+    residuals = list(
+        db_session.execute(
+            select(Charge).where(
+                Charge.origin_charge_id == source.id,
+                Charge.deleted_at.is_(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert refreshed_source is not None and refreshed_source.status == ChargeStatus.paid
+    assert len(residuals) == 1
+    assert residuals[0].status == ChargeStatus.unpaid
+    assert residuals[0].amount == Decimal("70.00")
+
+
+def test_create_payment_partial_flow_hits_continue_then_split(db_session):
+    """
+    Validate partial allocation continues across one fully covered charge then splits next.
+
+    1. Seed open invoice with two unpaid charges 20 and 40.
+    2. Create payment amount 30 to partially cover invoice.
+    3. Reload charges and residuals from database.
+    4. Validate first is paid and one residual exists for second.
+    """
+    school = create_school(db_session, "North Continue", "north-continue-payment")
+    student = create_student(db_session, "Continue", "Pay", "PAY-STU-013")
+    link_student_school(db_session, student.id, school.id)
+    invoice = create_invoice(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        period="2026-06",
+        issued_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 6, 30),
+        total_amount="60.00",
+        status=InvoiceStatus.open,
+    )
+    first = Charge(
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=invoice.id,
+        fee_definition_id=None,
+        origin_charge_id=None,
+        description="First",
+        amount=Decimal("20.00"),
+        period="2026-06",
+        debt_created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 6, 5),
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.unpaid,
+    )
+    second = Charge(
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=invoice.id,
+        fee_definition_id=None,
+        origin_charge_id=None,
+        description="Second",
+        amount=Decimal("40.00"),
+        period="2026-06",
+        debt_created_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+        due_date=date(2026, 6, 6),
+        charge_type=ChargeType.penalty,
+        status=ChargeStatus.unpaid,
+    )
+    db_session.add_all([first, second])
+    db_session.commit()
+
+    create_payment(
+        db_session,
+        school_id=school.id,
+        payload=PaymentCreate(
+            student_id=student.id,
+            invoice_id=invoice.id,
+            amount="30.00",
+            paid_at=datetime(2026, 6, 10, tzinfo=timezone.utc),
+            method="transfer",
+        ),
+    )
+    residuals = list(
+        db_session.execute(select(Charge).where(Charge.origin_charge_id == second.id, Charge.deleted_at.is_(None))).scalars().all()
+    )
+    assert db_session.get(Charge, first.id).status == ChargeStatus.paid
+    assert len(residuals) == 1
+    assert residuals[0].amount == Decimal("30.00")
+
+
+def test_create_payment_marks_negative_charges_paid(db_session):
+    """
+    Validate allocation marks unpaid negative charges as paid.
+
+    1. Seed open invoice with one unpaid negative charge.
+    2. Create payment once for same invoice.
+    3. Reload negative charge from database.
+    4. Validate negative charge status is paid.
+    """
+    school = create_school(db_session, "North Negative", "north-negative-payment")
+    student = create_student(db_session, "Negative", "Pay", "PAY-STU-014")
+    link_student_school(db_session, student.id, school.id)
+    invoice = create_invoice(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        period="2026-07",
+        issued_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 7, 30),
+        total_amount="-5.00",
+        status=InvoiceStatus.open,
+    )
+    negative = Charge(
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=invoice.id,
+        fee_definition_id=None,
+        origin_charge_id=None,
+        description="Credit",
+        amount=Decimal("-5.00"),
+        period="2026-07",
+        debt_created_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 7, 5),
+        charge_type=ChargeType.penalty,
+        status=ChargeStatus.unpaid,
+    )
+    db_session.add(negative)
+    db_session.commit()
+
+    create_payment(
+        db_session,
+        school_id=school.id,
+        payload=PaymentCreate(
+            student_id=student.id,
+            invoice_id=invoice.id,
+            amount="5.00",
+            paid_at=datetime(2026, 7, 10, tzinfo=timezone.utc),
+            method="cash",
+        ),
+    )
+    assert db_session.get(Charge, negative.id).status == ChargeStatus.paid
+
+
+def test_create_payment_partial_flow_hits_zero_remaining_break(db_session):
+    """
+    Validate partial allocation stops when remaining reaches zero at loop start.
+
+    1. Seed open invoice with two unpaid charges amount 10 and 10.
+    2. Create payment for 10 once.
+    3. Reload charges from database.
+    4. Validate first is paid and second remains unpaid.
+    """
+    school = create_school(db_session, "North Zero", "north-zero-payment")
+    student = create_student(db_session, "Zero", "Pay", "PAY-STU-015")
+    link_student_school(db_session, student.id, school.id)
+    invoice = create_invoice(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        period="2026-08",
+        issued_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 8, 30),
+        total_amount="20.00",
+        status=InvoiceStatus.open,
+    )
+    first = Charge(
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=invoice.id,
+        fee_definition_id=None,
+        origin_charge_id=None,
+        description="First ten",
+        amount=Decimal("10.00"),
+        period="2026-08",
+        debt_created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 8, 5),
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.unpaid,
+    )
+    second = Charge(
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=invoice.id,
+        fee_definition_id=None,
+        origin_charge_id=None,
+        description="Second ten",
+        amount=Decimal("10.00"),
+        period="2026-08",
+        debt_created_at=datetime(2026, 8, 2, tzinfo=timezone.utc),
+        due_date=date(2026, 8, 6),
+        charge_type=ChargeType.penalty,
+        status=ChargeStatus.unpaid,
+    )
+    db_session.add_all([first, second])
+    db_session.commit()
+
+    create_payment(
+        db_session,
+        school_id=school.id,
+        payload=PaymentCreate(
+            student_id=student.id,
+            invoice_id=invoice.id,
+            amount="10.00",
+            paid_at=datetime(2026, 8, 10, tzinfo=timezone.utc),
+            method="transfer",
+        ),
+    )
+    assert db_session.get(Charge, first.id).status == ChargeStatus.paid
+    assert db_session.get(Charge, second.id).status == ChargeStatus.unpaid
+
+
 def test_visibility_helpers_filter_non_admin_access(db_session):
     """
     Validate payment visibility helpers enforce student association.
@@ -169,6 +604,7 @@ def test_visibility_helpers_filter_non_admin_access(db_session):
         student_id=student.id,
         amount="55.00",
         paid_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
+        invoice_id=None,
     )
     visible_student = get_visible_student_for_payment_access(
         db_session,

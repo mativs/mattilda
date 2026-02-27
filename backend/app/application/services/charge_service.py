@@ -17,10 +17,11 @@ def serialize_charge_response(charge: Charge) -> dict:
         "student_id": charge.student_id,
         "fee_definition_id": charge.fee_definition_id,
         "invoice_id": charge.invoice_id,
-        "origin_invoice_id": charge.origin_invoice_id,
+        "origin_charge_id": charge.origin_charge_id,
         "description": charge.description,
         "amount": charge.amount,
         "period": charge.period,
+        "debt_created_at": charge.debt_created_at,
         "due_date": charge.due_date,
         "charge_type": charge.charge_type,
         "status": charge.status,
@@ -83,6 +84,7 @@ def create_charge(db: Session, school_id: int, payload: ChargeCreate) -> Charge:
         description=payload.description,
         amount=payload.amount,
         period=payload.period,
+        debt_created_at=payload.debt_created_at,
         due_date=payload.due_date,
         charge_type=payload.charge_type,
         status=payload.status,
@@ -110,6 +112,8 @@ def update_charge(db: Session, charge: Charge, payload: ChargeUpdate) -> Charge:
         charge.amount = payload.amount
     if payload.period is not None:
         charge.period = payload.period
+    if payload.debt_created_at is not None:
+        charge.debt_created_at = payload.debt_created_at
     if payload.due_date is not None:
         charge.due_date = payload.due_date
     if payload.charge_type is not None:
@@ -128,17 +132,17 @@ def delete_charge(db: Session, charge: Charge) -> None:
     db.commit()
 
 
-def get_unbilled_charges_for_student(db: Session, school_id: int, student_id: int) -> tuple[list[Charge], Decimal]:
+def get_unpaid_charges_for_student(db: Session, school_id: int, student_id: int) -> tuple[list[Charge], Decimal]:
     charges = list(
         db.execute(
             select(Charge)
             .where(
                 Charge.school_id == school_id,
                 Charge.student_id == student_id,
-                Charge.status == ChargeStatus.unbilled,
+                Charge.status == ChargeStatus.unpaid,
                 Charge.deleted_at.is_(None),
             )
-            .order_by(Charge.due_date, Charge.id)
+            .order_by(Charge.debt_created_at, Charge.id)
         )
         .scalars()
         .all()

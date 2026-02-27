@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.application.services.pagination_service import paginate_scalars
 from app.application.services.charge_service import (
     get_student_in_school,
-    get_unbilled_charges_for_student,
+    get_unpaid_charges_for_student,
     serialize_charge_response,
 )
 from app.application.services.student_service import (
@@ -31,7 +31,7 @@ from app.interfaces.api.v1.dependencies.auth import (
 )
 from app.interfaces.api.v1.dependencies.pagination import get_pagination_params
 from app.interfaces.api.v1.schemas.pagination import PaginationParams
-from app.interfaces.api.v1.schemas.charge import StudentUnbilledChargesResponse
+from app.interfaces.api.v1.schemas.charge import StudentUnpaidChargesResponse
 from app.interfaces.api.v1.schemas.student import (
     StudentAssociateSchoolPayload,
     StudentAssociateUserPayload,
@@ -116,18 +116,18 @@ def get_student(
 
 
 @router.get(
-    "/{student_id}/charges/unbilled",
-    response_model=StudentUnbilledChargesResponse,
+    "/{student_id}/charges/unpaid",
+    response_model=StudentUnpaidChargesResponse,
     dependencies=[Depends(require_school_admin)],
 )
-def get_student_unbilled_charges(
+def get_student_unpaid_charges(
     student_id: int,
     school_id: int = Depends(get_current_school_id),
     db: Session = Depends(get_db),
 ):
     student = get_student_in_school(db=db, student_id=student_id, school_id=school_id)
-    charges, total = get_unbilled_charges_for_student(db=db, school_id=school_id, student_id=student.id)
-    return {"items": [serialize_charge_response(charge) for charge in charges], "total_unbilled_amount": total}
+    charges, total = get_unpaid_charges_for_student(db=db, school_id=school_id, student_id=student.id)
+    return {"items": [serialize_charge_response(charge) for charge in charges], "total_unpaid_amount": total}
 
 
 @router.put("/{student_id}", response_model=StudentResponse, dependencies=[Depends(require_school_admin)])

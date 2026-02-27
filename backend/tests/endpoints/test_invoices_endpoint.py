@@ -1,5 +1,6 @@
 from datetime import date, datetime, timezone
 
+from app.domain.charge_enums import ChargeStatus
 from app.domain.invoice_status import InvoiceStatus
 from tests.helpers.auth import school_header, token_for_user
 from tests.helpers.factories import (
@@ -328,3 +329,45 @@ def test_get_student_invoices_for_non_admin_requires_student_association(client,
     )
     assert response.status_code == 200
     assert response.json()["items"][0]["id"] == invoice.id
+
+
+def test_generate_student_invoice_returns_201_for_admin(client, seeded_users, db_session):
+    """
+    Validate manual invoice generation endpoint for admin users.
+
+    1. Seed one unpaid charge for target student in active school.
+    2. Call invoice generation endpoint once as admin.
+    3. Receive created invoice response.
+    4. Validate returned invoice references requested student.
+    """
+    create_charge(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_one"].id,
+        description="Pending charge",
+        amount="99.00",
+        due_date=date(2026, 10, 10),
+        status=ChargeStatus.unpaid,
+    )
+    response = client.post(
+        f"/api/v1/students/{seeded_users['child_one'].id}/invoices/generate",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 201
+    assert response.json()["student_id"] == seeded_users["child_one"].id
+
+
+def test_generate_student_invoice_returns_403_for_non_admin(client, seeded_users):
+    """
+    Validate manual invoice generation endpoint is admin-only.
+
+    1. Build teacher school-scoped header.
+    2. Call invoice generation endpoint once.
+    3. Receive forbidden response.
+    4. Validate school admin guard is enforced.
+    """
+    response = client.post(
+        f"/api/v1/students/{seeded_users['child_one'].id}/invoices/generate",
+        headers=school_header(token_for_user(seeded_users["teacher"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 403

@@ -117,14 +117,15 @@ def test_create_charge_returns_201_for_admin(client, seeded_users):
             "description": "New charge",
             "amount": "44.00",
             "period": "2026-04",
+            "debt_created_at": "2026-04-01T09:00:00Z",
             "due_date": "2026-04-20",
             "charge_type": "fee",
-            "status": "unbilled",
+            "status": "unpaid",
         },
     )
     assert response.status_code == 201
     assert response.json()["student_id"] == seeded_users["child_one"].id
-    assert response.json()["status"] == "unbilled"
+    assert response.json()["status"] == "unpaid"
 
 
 def test_create_charge_returns_404_for_missing_student(client, seeded_users):
@@ -145,9 +146,10 @@ def test_create_charge_returns_404_for_missing_student(client, seeded_users):
             "description": "Invalid student charge",
             "amount": "44.00",
             "period": None,
+            "debt_created_at": "2026-04-01T09:00:00Z",
             "due_date": "2026-04-20",
             "charge_type": "fee",
-            "status": "unbilled",
+            "status": "unpaid",
         },
     )
     assert response.status_code == 404
@@ -238,11 +240,11 @@ def test_update_charge_returns_200_for_admin(client, seeded_users, db_session):
     response = client.put(
         f"/api/v1/charges/{charge.id}",
         headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
-        json={"description": "Updated charge", "status": "billed", "charge_type": "interest"},
+        json={"description": "Updated charge", "status": "paid", "charge_type": "interest"},
     )
     assert response.status_code == 200
     assert response.json()["description"] == "Updated charge"
-    assert response.json()["status"] == "billed"
+    assert response.json()["status"] == "paid"
 
 
 def test_update_charge_returns_404_for_missing_charge(client, seeded_users):
@@ -302,65 +304,65 @@ def test_delete_charge_returns_404_for_missing_charge(client, seeded_users):
     assert response.status_code == 404
 
 
-def test_get_student_unbilled_charges_returns_200_for_admin(client, seeded_users, db_session):
+def test_get_student_unpaid_charges_returns_200_for_admin(client, seeded_users, db_session):
     """
-    Validate student unbilled charges summary success for admin.
+    Validate student unpaid charges summary success for admin.
 
-    1. Seed two unbilled charges and one billed charge for student.
-    2. Call student unbilled endpoint once as admin.
+    1. Seed two unpaid charges and one paid charge for student.
+    2. Call student unpaid endpoint once as admin.
     3. Receive successful summary payload.
-    4. Validate item count and total amount include only unbilled charges.
+    4. Validate item count and total amount include only unpaid charges.
     """
     create_charge(
         db_session,
         school_id=seeded_users["north_school"].id,
         student_id=seeded_users["child_one"].id,
-        description="Unbilled A",
+        description="Unpaid A",
         amount="10.00",
         due_date=date(2026, 4, 24),
-        status=ChargeStatus.unbilled,
+        status=ChargeStatus.unpaid,
         charge_type=ChargeType.fee,
     )
     create_charge(
         db_session,
         school_id=seeded_users["north_school"].id,
         student_id=seeded_users["child_one"].id,
-        description="Billed B",
+        description="Paid B",
         amount="20.00",
         due_date=date(2026, 4, 25),
-        status=ChargeStatus.billed,
+        status=ChargeStatus.paid,
         charge_type=ChargeType.fee,
     )
     create_charge(
         db_session,
         school_id=seeded_users["north_school"].id,
         student_id=seeded_users["child_one"].id,
-        description="Unbilled C",
+        description="Unpaid C",
         amount="5.50",
         due_date=date(2026, 4, 26),
-        status=ChargeStatus.unbilled,
+        status=ChargeStatus.unpaid,
         charge_type=ChargeType.interest,
     )
     response = client.get(
-        f"/api/v1/students/{seeded_users['child_one'].id}/charges/unbilled",
+        f"/api/v1/students/{seeded_users['child_one'].id}/charges/unpaid",
         headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
     )
     assert response.status_code == 200
     assert len(response.json()["items"]) == 2
-    assert response.json()["total_unbilled_amount"] == "15.50"
+    assert response.json()["total_unpaid_amount"] == "15.50"
 
 
-def test_get_student_unbilled_charges_returns_403_for_non_admin(client, seeded_users):
+def test_get_student_unpaid_charges_returns_403_for_non_admin(client, seeded_users):
     """
-    Validate student unbilled charges forbidden for non-admin users.
+    Validate student unpaid charges forbidden for non-admin users.
 
     1. Build non-admin school-scoped header.
-    2. Call student unbilled endpoint once.
+    2. Call student unpaid endpoint once.
     3. Receive forbidden response.
     4. Validate endpoint is admin-only.
     """
     response = client.get(
-        f"/api/v1/students/{seeded_users['child_one'].id}/charges/unbilled",
+        f"/api/v1/students/{seeded_users['child_one'].id}/charges/unpaid",
         headers=school_header(token_for_user(seeded_users["teacher"].id), seeded_users["north_school"].id),
     )
     assert response.status_code == 403

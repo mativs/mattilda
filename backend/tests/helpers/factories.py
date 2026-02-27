@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -80,11 +80,12 @@ def create_charge(
     amount: str,
     due_date: date,
     charge_type: ChargeType = ChargeType.fee,
-    status: ChargeStatus = ChargeStatus.unbilled,
+    status: ChargeStatus = ChargeStatus.unpaid,
     period: str | None = None,
+    debt_created_at: datetime | None = None,
     fee_definition_id: int | None = None,
     invoice_id: int | None = None,
-    origin_invoice_id: int | None = None,
+    origin_charge_id: int | None = None,
 ) -> Charge:
     charge = Charge(
         school_id=school_id,
@@ -93,11 +94,12 @@ def create_charge(
         description=description,
         amount=Decimal(amount),
         period=period,
+        debt_created_at=debt_created_at or datetime.combine(due_date, datetime.min.time(), tzinfo=timezone.utc),
         due_date=due_date,
         charge_type=charge_type,
         status=status,
         invoice_id=invoice_id,
-        origin_invoice_id=origin_invoice_id,
+        origin_charge_id=origin_charge_id,
     )
     db.add(charge)
     db.commit()

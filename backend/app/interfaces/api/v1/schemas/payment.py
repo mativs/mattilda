@@ -6,16 +6,12 @@ from pydantic import BaseModel, ConfigDict
 from app.interfaces.api.v1.schemas.pagination import PaginationMeta
 
 
-class PaymentBase(BaseModel):
+class PaymentCreate(BaseModel):
     student_id: int
-    invoice_id: int | None = None
+    invoice_id: int
     amount: Decimal
     paid_at: datetime
     method: str
-
-
-class PaymentCreate(PaymentBase):
-    pass
 
 
 class PaymentStudentRef(BaseModel):
@@ -30,11 +26,16 @@ class PaymentInvoiceRef(BaseModel):
     status: str
 
 
-class PaymentResponse(PaymentBase):
+class PaymentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     school_id: int
+    student_id: int
+    invoice_id: int | None = None
+    amount: Decimal
+    paid_at: datetime
+    method: str
     created_at: datetime
     updated_at: datetime
     student: PaymentStudentRef

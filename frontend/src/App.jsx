@@ -8,8 +8,20 @@ const SCHOOL_KEY = "mattilda_school_id";
 const DEFAULT_LIMIT = 10;
 const USER_ROLE_OPTIONS = ["admin", "director", "teacher", "student", "parent"];
 const FEE_RECURRENCE_OPTIONS = ["monthly", "annual", "one_time"];
-const CHARGE_TYPE_OPTIONS = ["fee", "interest", "penalty", "balance_forward"];
-const CHARGE_STATUS_OPTIONS = ["unbilled", "billed", "cancelled"];
+const CHARGE_TYPE_OPTIONS = ["fee", "interest", "penalty"];
+const CHARGE_STATUS_OPTIONS = ["paid", "unpaid", "cancelled"];
+
+function toDateTimeLocal(value) {
+  if (!value) {
+    return "";
+  }
+  const normalized = String(value).replace("Z", "");
+  return normalized.slice(0, 16);
+}
+
+function currentDateTimeLocal() {
+  return toDateTimeLocal(new Date().toISOString());
+}
 
 function usePublicHealth() {
   const [loading, setLoading] = useState(true);
@@ -149,7 +161,7 @@ function ProfilePage({ me, selectedSchool }) {
 function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
   const { studentId } = useParams();
   const [student, setStudent] = useState(null);
-  const [unbilled, setUnbilled] = useState({ items: [], total_unbilled_amount: "0.00" });
+  const [unpaid, setUnpaid] = useState({ items: [], total_unpaid_amount: "0.00" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -163,23 +175,23 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
       try {
         const requests = [request(`/api/v1/students/${studentId}`)];
         if (isSchoolAdmin) {
-          requests.push(request(`/api/v1/students/${studentId}/charges/unbilled`));
+          requests.push(request(`/api/v1/students/${studentId}/charges/unpaid`));
         }
-        const [studentPayload, unbilledPayload] = await Promise.all(requests);
+        const [studentPayload, unpaidPayload] = await Promise.all(requests);
         const payload = studentPayload;
         setStudent(payload);
-        if (isSchoolAdmin && unbilledPayload) {
-          setUnbilled({
-            items: unbilledPayload.items ?? [],
-            total_unbilled_amount: unbilledPayload.total_unbilled_amount ?? "0.00",
+        if (isSchoolAdmin && unpaidPayload) {
+          setUnpaid({
+            items: unpaidPayload.items ?? [],
+            total_unpaid_amount: unpaidPayload.total_unpaid_amount ?? "0.00",
           });
         } else {
-          setUnbilled({ items: [], total_unbilled_amount: "0.00" });
+          setUnpaid({ items: [], total_unpaid_amount: "0.00" });
         }
       } catch (err) {
         setError(err.message);
         setStudent(null);
-        setUnbilled({ items: [], total_unbilled_amount: "0.00" });
+        setUnpaid({ items: [], total_unpaid_amount: "0.00" });
       } finally {
         setLoading(false);
       }
@@ -207,7 +219,7 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
           </div>
           {isSchoolAdmin && (
             <div className="association-box">
-              <p className="muted">Unbilled charges total: {unbilled.total_unbilled_amount}</p>
+              <p className="muted">Unpaid charges total: {unpaid.total_unpaid_amount}</p>
               <table>
                 <thead>
                   <tr>
@@ -219,7 +231,7 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {unbilled.items.map((charge) => (
+                  {unpaid.items.map((charge) => (
                     <tr key={charge.id}>
                       <td>{charge.id}</td>
                       <td>{charge.description}</td>
@@ -238,7 +250,7 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
   );
 }
 
-function StudentBillingPage({ selectedSchoolId, request }) {
+function StudentBillingPage({ selectedSchoolId, request, isSchoolAdmin }) {
   const { studentId } = useParams();
   const [student, setStudent] = useState(null);
   const [rows, setRows] = useState([]);
@@ -300,6 +312,24 @@ function StudentBillingPage({ selectedSchoolId, request }) {
       {error && <p className="error">{error}</p>}
       <div className="toolbar">
         <input placeholder="Search by period or status..." value={search} onChange={(event) => setSearch(event.target.value)} />
+        {isSchoolAdmin && (
+          <button
+            className="ghost"
+            onClick={async () => {
+              try {
+                setError("");
+                await request(`/api/v1/students/${studentId}/invoices/generate`, { method: "POST" });
+                await loadInvoices(0, search);
+                setOffset(0);
+              } catch (err) {
+                setError(err.message);
+              }
+            }}
+            type="button"
+          >
+            Generate Invoice
+          </button>
+        )}
       </div>
       <table>
         <thead>
@@ -1548,6 +1578,17 @@ function SchoolsConfigPage({ request, selectedSchoolId }) {
         onCreate={() => {
           setError("");
           setCreateOpen(true);
+          setCreateForm({
+            student_id: "",
+            fee_definition_id: "",
+            description: "",
+            amount: "",
+            period: "",
+            debt_created_at: currentDateTimeLocal(),
+            due_date: "",
+            charge_type: "fee",
+            status: "unpaid",
+          });
         }}
       />
       <table>
@@ -1899,9 +1940,10 @@ function ChargesConfigPage({ request, selectedSchoolId }) {
     description: "",
     amount: "",
     period: "",
+    debt_created_at: "",
     due_date: "",
     charge_type: "fee",
-    status: "unbilled",
+    status: "unpaid",
   });
   const [editForm, setEditForm] = useState({
     student_id: "",
@@ -1909,9 +1951,10 @@ function ChargesConfigPage({ request, selectedSchoolId }) {
     description: "",
     amount: "",
     period: "",
+    debt_created_at: "",
     due_date: "",
     charge_type: "fee",
-    status: "unbilled",
+    status: "unpaid",
   });
 
   async function loadCharges() {
@@ -1967,9 +2010,10 @@ function ChargesConfigPage({ request, selectedSchoolId }) {
       description: charge.description ?? "",
       amount: charge.amount != null ? String(charge.amount) : "",
       period: charge.period ?? "",
+      debt_created_at: toDateTimeLocal(charge.debt_created_at),
       due_date: charge.due_date ?? "",
       charge_type: charge.charge_type ?? "fee",
-      status: charge.status ?? "unbilled",
+      status: charge.status ?? "unpaid",
     });
   }
 
@@ -2042,6 +2086,7 @@ function ChargesConfigPage({ request, selectedSchoolId }) {
                   description: createForm.description,
                   amount: createForm.amount,
                   period: createForm.period || null,
+                  debt_created_at: createForm.debt_created_at ? new Date(createForm.debt_created_at).toISOString() : undefined,
                   due_date: createForm.due_date,
                   charge_type: createForm.charge_type,
                   status: createForm.status,
@@ -2054,9 +2099,10 @@ function ChargesConfigPage({ request, selectedSchoolId }) {
                 description: "",
                 amount: "",
                 period: "",
+                debt_created_at: currentDateTimeLocal(),
                 due_date: "",
                 charge_type: "fee",
-                status: "unbilled",
+                status: "unpaid",
               });
               setMessage("Charge created");
               await loadCharges();
@@ -2095,6 +2141,11 @@ function ChargesConfigPage({ request, selectedSchoolId }) {
             onChange={(e) => setCreateForm({ ...createForm, amount: e.target.value })}
           />
           <input placeholder="Period (YYYY-MM)" value={createForm.period} onChange={(e) => setCreateForm({ ...createForm, period: e.target.value })} />
+          <input
+            type="datetime-local"
+            value={createForm.debt_created_at}
+            onChange={(e) => setCreateForm({ ...createForm, debt_created_at: e.target.value })}
+          />
           <input type="date" value={createForm.due_date} onChange={(e) => setCreateForm({ ...createForm, due_date: e.target.value })} />
           <select value={createForm.charge_type} onChange={(e) => setCreateForm({ ...createForm, charge_type: e.target.value })}>
             {CHARGE_TYPE_OPTIONS.map((option) => (
@@ -2128,6 +2179,7 @@ function ChargesConfigPage({ request, selectedSchoolId }) {
                   description: editForm.description || undefined,
                   amount: editForm.amount || undefined,
                   period: editForm.period || null,
+                  debt_created_at: editForm.debt_created_at ? new Date(editForm.debt_created_at).toISOString() : undefined,
                   due_date: editForm.due_date || undefined,
                   charge_type: editForm.charge_type || undefined,
                   status: editForm.status || undefined,
@@ -2161,6 +2213,11 @@ function ChargesConfigPage({ request, selectedSchoolId }) {
           <input placeholder="Description" value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
           <input type="number" step="0.01" placeholder="Amount" value={editForm.amount} onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })} />
           <input placeholder="Period (YYYY-MM)" value={editForm.period} onChange={(e) => setEditForm({ ...editForm, period: e.target.value })} />
+          <input
+            type="datetime-local"
+            value={editForm.debt_created_at}
+            onChange={(e) => setEditForm({ ...editForm, debt_created_at: e.target.value })}
+          />
           <input type="date" value={editForm.due_date} onChange={(e) => setEditForm({ ...editForm, due_date: e.target.value })} />
           <select value={editForm.charge_type} onChange={(e) => setEditForm({ ...editForm, charge_type: e.target.value })}>
             {CHARGE_TYPE_OPTIONS.map((option) => (
@@ -2305,7 +2362,10 @@ function AppLayout({
             path="/students/:studentId"
             element={<StudentDetailPage selectedSchoolId={selectedSchoolId} request={request} isSchoolAdmin={isSchoolAdmin} />}
           />
-          <Route path="/students/:studentId/billing" element={<StudentBillingPage selectedSchoolId={selectedSchoolId} request={request} />} />
+          <Route
+            path="/students/:studentId/billing"
+            element={<StudentBillingPage selectedSchoolId={selectedSchoolId} request={request} isSchoolAdmin={isSchoolAdmin} />}
+          />
           <Route
             path="/students/:studentId/payments"
             element={<StudentPaymentsPage selectedSchoolId={selectedSchoolId} request={request} />}
