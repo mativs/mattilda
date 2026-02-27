@@ -364,3 +364,118 @@ def test_reconciliation_detects_duplicate_payments(db_session):
     )
     findings = run_all_reconciliation_checks(db_session, school_id=school.id, as_of=base_time + timedelta(minutes=1))
     assert any(item["check_code"] == "duplicate_payment_window" for item in findings)
+
+
+def test_reconciliation_detects_school_balance_equation_mismatch(db_session):
+    """
+    Validate school-level equation check detects charged-paid-pending mismatch.
+
+    1. Seed one paid positive charge linked to invoice and one unpaid positive charge.
+    2. Seed payment lower than paid charge amount to force equation drift.
+    3. Run all checks once.
+    4. Validate school_balance_equation_mismatch finding exists with non-zero delta.
+    """
+
+    school = create_school(db_session, "Recon I", "recon-i")
+    student = create_student(db_session, "I", "Student", "REC-I-001")
+    link_student_school(db_session, student.id, school.id)
+    invoice = create_invoice(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        period="2027-03",
+        issued_at=datetime(2027, 3, 1, tzinfo=timezone.utc),
+        due_date=date(2027, 3, 10),
+        total_amount="200.00",
+        status=InvoiceStatus.open,
+    )
+    create_charge(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        description="Paid positive charge",
+        amount="100.00",
+        due_date=date(2027, 3, 10),
+        status=ChargeStatus.paid,
+        invoice_id=invoice.id,
+    )
+    create_charge(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        description="Unpaid positive charge",
+        amount="100.00",
+        due_date=date(2027, 3, 10),
+        status=ChargeStatus.unpaid,
+        invoice_id=invoice.id,
+    )
+    create_payment(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=invoice.id,
+        amount="80.00",
+        paid_at=datetime(2027, 3, 5, tzinfo=timezone.utc),
+    )
+
+    findings = run_all_reconciliation_checks(db_session, school_id=school.id, as_of=datetime(2027, 3, 6, tzinfo=timezone.utc))
+    target = next((item for item in findings if item["check_code"] == "school_balance_equation_mismatch"), None)
+    assert target is not None
+    assert target["entity_id"] == school.id
+    assert target["details_json"]["delta"] != "0.00"
+
+
+def test_reconciliation_skips_school_balance_equation_when_balanced(db_session):
+    """
+    Validate school-level equation check is silent when charged-paid-pending equals zero.
+
+    1. Seed one paid charge with matching payment evidence and one unpaid charge.
+    2. Ensure school totals satisfy charged - paid - pending == 0.
+    3. Run all checks once.
+    4. Validate no school_balance_equation_mismatch finding is produced.
+    """
+
+    school = create_school(db_session, "Recon I2", "recon-i2")
+    student = create_student(db_session, "I2", "Student", "REC-I2-001")
+    link_student_school(db_session, student.id, school.id)
+    invoice = create_invoice(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        period="2027-04",
+        issued_at=datetime(2027, 4, 1, tzinfo=timezone.utc),
+        due_date=date(2027, 4, 10),
+        total_amount="200.00",
+        status=InvoiceStatus.closed,
+    )
+    create_charge(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        description="Paid positive charge balanced",
+        amount="100.00",
+        due_date=date(2027, 4, 10),
+        status=ChargeStatus.paid,
+        invoice_id=invoice.id,
+    )
+    create_charge(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        description="Unpaid positive charge balanced",
+        amount="100.00",
+        due_date=date(2027, 4, 10),
+        status=ChargeStatus.unpaid,
+        invoice_id=None,
+    )
+    create_payment(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=invoice.id,
+        amount="100.00",
+        paid_at=datetime(2027, 4, 5, tzinfo=timezone.utc),
+    )
+
+    findings = run_all_reconciliation_checks(db_session, school_id=school.id, as_of=datetime(2027, 4, 6, tzinfo=timezone.utc))
+    assert not any(item["check_code"] == "school_balance_equation_mismatch" for item in findings)

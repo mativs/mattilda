@@ -99,12 +99,28 @@ The current billing flow is multi-step and stateful (charges, invoices, invoice 
   - unapplied negative unpaid charges attached to invoices that already have payments
 - Contextual integrity check:
   - invoice items referencing cancelled charges with no residual replacement
+  - school-level balance equation mismatch (`total_charged - total_paid - total_pending != 0`)
 
 ### False-positive guards
 
 - Orphan-charge check only flags charges when the student already has an open, not-due invoice.
 - Negative-charge check only flags charges linked to invoices that already received payments.
 - Duplicate-payment check requires same student, same amount, and very close timestamps.
+- School-balance equation check uses cent tolerance (`abs(delta) > 0.01`) to avoid false positives from tiny rounding artifacts.
+
+### School-level ledger invariant
+
+The check `school_balance_equation_mismatch` validates a global accounting identity per school:
+
+- `total_charged_amount`: positive, non-cancelled charges
+- `total_paid_amount`: non-deleted payments
+- `total_pending_amount`: unpaid charges (including negative credits)
+
+Expected identity:
+
+- `total_charged_amount - total_paid_amount - total_pending_amount = 0`
+
+This is intentionally a high-signal aggregate guard. It does not replace granular checks; instead, it complements them by detecting drift at school scope while other findings help root-cause the inconsistency.
 
 ### Future bank-feed reconciliation
 

@@ -145,6 +145,12 @@ Switch to `reconciliation-lab`, then run reconciliation from Dashboard (`Run Rec
 - **Expect**: Finding type `duplicate_payment_window`.
 - **Why**: Detects likely double-submit/retry anomalies.
 
+### RECON-06 `RECON-06 SchoolBalanceDrift`
+- **Case**: School-level totals violate ledger identity.
+- **Do**: Run reconciliation and inspect latest findings.
+- **Expect**: Finding type `school_balance_equation_mismatch`.
+- **Why**: Global invariant check ensures `total_charged - total_paid - total_pending = 0` and flags accounting drift.
+
 ---
 
 ## Dashboard Financial Summary Checks

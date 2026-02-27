@@ -292,6 +292,48 @@ def _check_paid_positive_charge_without_payment_evidence(db: Session, *, school_
     ]
 
 
+def _check_school_balance_equation(db: Session, *, school_id: int) -> list[dict]:
+    charged_total = db.execute(
+        select(func.coalesce(func.sum(Charge.amount), Decimal("0.00"))).where(
+            Charge.school_id == school_id,
+            Charge.deleted_at.is_(None),
+            Charge.status != ChargeStatus.cancelled,
+            Charge.amount > Decimal("0.00"),
+        )
+    ).scalar_one()
+    paid_total = db.execute(
+        select(func.coalesce(func.sum(Payment.amount), Decimal("0.00"))).where(
+            Payment.school_id == school_id,
+            Payment.deleted_at.is_(None),
+        )
+    ).scalar_one()
+    pending_total = db.execute(
+        select(func.coalesce(func.sum(Charge.amount), Decimal("0.00"))).where(
+            Charge.school_id == school_id,
+            Charge.deleted_at.is_(None),
+            Charge.status == ChargeStatus.unpaid,
+        )
+    ).scalar_one()
+    delta = (Decimal(charged_total) - Decimal(paid_total) - Decimal(pending_total)).quantize(Decimal("0.01"))
+    if delta.copy_abs() <= Decimal("0.01"):
+        return []
+    return [
+        {
+            "check_code": "school_balance_equation_mismatch",
+            "severity": "high",
+            "entity_type": "school",
+            "entity_id": school_id,
+            "message": "School balance equation mismatch: charged - paid - pending must equal zero",
+            "details_json": {
+                "total_charged_amount": str(Decimal(charged_total).quantize(Decimal("0.01"))),
+                "total_paid_amount": str(Decimal(paid_total).quantize(Decimal("0.01"))),
+                "total_pending_amount": str(Decimal(pending_total).quantize(Decimal("0.01"))),
+                "delta": str(delta),
+            },
+        }
+    ]
+
+
 def run_all_reconciliation_checks(db: Session, *, school_id: int, as_of: datetime | None = None) -> list[dict]:
     as_of = as_of or datetime.now(timezone.utc)
     findings: list[dict] = []
@@ -303,4 +345,5 @@ def run_all_reconciliation_checks(db: Session, *, school_id: int, as_of: datetim
     findings.extend(_check_unapplied_negative_charges(db=db, school_id=school_id))
     findings.extend(_check_duplicate_payments(db=db, school_id=school_id))
     findings.extend(_check_paid_positive_charge_without_payment_evidence(db=db, school_id=school_id))
+    findings.extend(_check_school_balance_equation(db=db, school_id=school_id))
     return findings

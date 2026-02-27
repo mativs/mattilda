@@ -908,6 +908,41 @@ def seed_tc_lab_fixtures(db: Session, *, admin: User) -> None:
             _attach_invoice_snapshot(db=db, invoice=invoice, charges=[charge])
 
         if tc == 12:
+            prior_overpayment_period = recent_past_period
+            prior_overpayment_due_date = _month_date(recent_past_month, 10)
+            prior_fee_charge = create_charge_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-12 prior fee paid",
+                amount=Decimal("100.00"),
+                period=prior_overpayment_period,
+                debt_created_at=_month_datetime(recent_past_month, 1),
+                due_date=prior_overpayment_due_date,
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.paid,
+            )
+            prior_invoice = create_invoice_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                period=prior_overpayment_period,
+                issued_at=_month_datetime(recent_past_month, 1),
+                due_date=prior_overpayment_due_date,
+                total_amount=Decimal("100.00"),
+                status=InvoiceStatus.closed,
+            )
+            _attach_invoice_snapshot(db=db, invoice=prior_invoice, charges=[prior_fee_charge])
+            create_payment_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                invoice_id=prior_invoice.id,
+                amount=Decimal("120.00"),
+                paid_at=_month_datetime(recent_past_month, 12, 12, 0),
+                method="transfer",
+            )
             fee_charge = create_charge_if_missing(
                 db=db,
                 school_id=tc_school.id,
@@ -1013,6 +1048,7 @@ def seed_reconciliation_lab_fixtures(db: Session, *, admin: User) -> None:
     - invoice_open_with_sufficient_payments
     - duplicate_payment_window
     - paid_charge_without_payment_evidence
+    - school_balance_equation_mismatch
     """
 
     recon_school = create_school_if_missing(db=db, name="Reconciliation Lab", slug="reconciliation-lab")
@@ -1183,6 +1219,62 @@ def seed_reconciliation_lab_fixtures(db: Session, *, admin: User) -> None:
         due_date=_month_date(today_anchor, 25),
         charge_type=ChargeType.fee,
         status=ChargeStatus.paid,
+    )
+
+    balance_drift_student = create_student_if_missing(
+        db=db,
+        first_name="RECON-06",
+        last_name="SchoolBalanceDrift",
+        external_id="RECON-06-STU",
+    )
+    associate_student_school_if_missing(db=db, student_id=balance_drift_student.id, school_id=recon_school.id)
+    balance_period = f"{today_anchor.year:04d}-{today_anchor.month:02d}-RB"
+    balance_due = _month_date(today_anchor, 26)
+    balance_invoice = create_invoice_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=balance_drift_student.id,
+        period=balance_period,
+        issued_at=_month_datetime(today_anchor, 8),
+        due_date=balance_due,
+        total_amount=Decimal("200.00"),
+        status=InvoiceStatus.open,
+    )
+    paid_charge = create_charge_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=balance_drift_student.id,
+        fee_definition_id=None,
+        description="RECON-06 paid charge with short payment",
+        amount=Decimal("100.00"),
+        period=balance_period,
+        debt_created_at=_month_datetime(today_anchor, 8),
+        due_date=balance_due,
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.paid,
+    )
+    unpaid_charge = create_charge_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=balance_drift_student.id,
+        fee_definition_id=None,
+        description="RECON-06 unpaid charge",
+        amount=Decimal("100.00"),
+        period=balance_period,
+        debt_created_at=_month_datetime(today_anchor, 8),
+        due_date=balance_due,
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.unpaid,
+    )
+    _attach_invoice_snapshot(db=db, invoice=balance_invoice, charges=[paid_charge, unpaid_charge])
+    create_payment_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=balance_drift_student.id,
+        invoice_id=balance_invoice.id,
+        amount=Decimal("80.00"),
+        paid_at=_month_datetime(today_anchor, 9, 10, 0),
+        method="transfer",
     )
 
 
