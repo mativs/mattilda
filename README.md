@@ -1,5 +1,7 @@
 # Mattilda Take-Home Project Setup
 
+![App dashboard](docs/screenshots/dashboard.png)
+
 Starter environment for a take-home exercise with:
 
 - Backend: Python + FastAPI + Celery
@@ -14,6 +16,8 @@ Starter environment for a take-home exercise with:
 - Multi-tenant model: School-based isolation with PostgreSQL RLS
 - Student model: many-to-many user/student and student/school associations
 - Charge/Payment/Invoice model: only one invoice open for student
+- Invoice Generator process
+- Conciliation proccess
 
 ## Project structure
 
