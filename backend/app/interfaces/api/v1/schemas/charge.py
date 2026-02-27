@@ -60,4 +60,5 @@ class ChargeListResponse(BaseModel):
 
 class StudentUnpaidChargesResponse(BaseModel):
     items: list[ChargeResponse] = Field(default_factory=list)
+    pagination: PaginationMeta
     total_unpaid_amount: Decimal = Decimal("0.00")

@@ -344,25 +344,45 @@ def test_get_student_unpaid_charges_returns_200_for_admin(client, seeded_users, 
         charge_type=ChargeType.interest,
     )
     response = client.get(
-        f"/api/v1/students/{seeded_users['child_one'].id}/charges/unpaid",
+        f"/api/v1/students/{seeded_users['child_one'].id}/charges/unpaid?offset=0&limit=1&search=unpaid",
         headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
     )
     assert response.status_code == 200
-    assert len(response.json()["items"]) == 2
+    assert len(response.json()["items"]) == 1
+    assert response.json()["pagination"]["offset"] == 0
+    assert response.json()["pagination"]["limit"] == 1
+    assert response.json()["pagination"]["filtered_total"] == 2
     assert response.json()["total_unpaid_amount"] == "15.50"
 
 
-def test_get_student_unpaid_charges_returns_403_for_non_admin(client, seeded_users):
+def test_get_student_unpaid_charges_returns_404_for_non_visible_non_admin(client, seeded_users):
     """
-    Validate student unpaid charges forbidden for non-admin users.
+    Validate student unpaid charges hidden for non-associated non-admin users.
 
-    1. Build non-admin school-scoped header.
+    1. Build non-admin user header without association to target student.
     2. Call student unpaid endpoint once.
-    3. Receive forbidden response.
-    4. Validate endpoint is admin-only.
+    3. Receive not found response.
+    4. Validate endpoint enforces student visibility rules.
     """
     response = client.get(
         f"/api/v1/students/{seeded_users['child_one'].id}/charges/unpaid",
         headers=school_header(token_for_user(seeded_users["teacher"].id), seeded_users["north_school"].id),
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
+
+
+def test_get_student_unpaid_charges_returns_200_for_visible_non_admin(client, seeded_users):
+    """
+    Validate student unpaid charges success for associated non-admin users.
+
+    1. Build associated non-admin school-scoped header.
+    2. Call student unpaid endpoint once.
+    3. Receive successful response.
+    4. Validate response includes pagination metadata.
+    """
+    response = client.get(
+        f"/api/v1/students/{seeded_users['child_one'].id}/charges/unpaid",
+        headers=school_header(token_for_user(seeded_users["student"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    assert "pagination" in response.json()

@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 
 from app.application.services.pagination_service import paginate_scalars
 from app.application.services.charge_service import (
-    get_student_in_school,
     get_unpaid_charges_for_student,
     serialize_charge_response,
 )
@@ -16,12 +15,14 @@ from app.application.services.student_service import (
     deassociate_user_student,
     delete_student,
     get_student_by_id,
+    get_student_financial_summary,
     get_visible_student_for_user,
     serialize_student_response,
     update_student,
 )
+from app.domain.charge_enums import ChargeStatus
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import Student, StudentSchool, User, UserSchoolRole, UserStudent
+from app.infrastructure.db.models import Charge, Student, StudentSchool, User, UserSchoolRole, UserStudent
 from app.infrastructure.db.session import get_db
 from app.interfaces.api.v1.dependencies.auth import (
     get_current_school_id,
@@ -37,6 +38,7 @@ from app.interfaces.api.v1.schemas.student import (
     StudentAssociateUserPayload,
     StudentCreate,
     StudentListResponse,
+    StudentFinancialSummaryResponse,
     StudentResponse,
     StudentUpdate,
 )
@@ -118,16 +120,66 @@ def get_student(
 @router.get(
     "/{student_id}/charges/unpaid",
     response_model=StudentUnpaidChargesResponse,
-    dependencies=[Depends(require_school_admin)],
 )
 def get_student_unpaid_charges(
     student_id: int,
     school_id: int = Depends(get_current_school_id),
+    current_user: User = Depends(require_authenticated),
+    memberships: list[UserSchoolRole] = Depends(get_current_school_memberships),
+    pagination: PaginationParams = Depends(get_pagination_params),
     db: Session = Depends(get_db),
 ):
-    student = get_student_in_school(db=db, student_id=student_id, school_id=school_id)
-    charges, total = get_unpaid_charges_for_student(db=db, school_id=school_id, student_id=student.id)
-    return {"items": [serialize_charge_response(charge) for charge in charges], "total_unpaid_amount": total}
+    is_admin = any(link.role == UserRole.admin.value for link in memberships)
+    student = get_visible_student_for_user(
+        db=db,
+        student_id=student_id,
+        school_id=school_id,
+        user_id=current_user.id,
+        is_admin=is_admin,
+    )
+    if student is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
+
+    base_query = (
+        select(Charge)
+        .where(
+            Charge.school_id == school_id,
+            Charge.student_id == student.id,
+            Charge.deleted_at.is_(None),
+            Charge.status == ChargeStatus.unpaid,
+        )
+        .order_by(Charge.due_date.desc(), Charge.id.desc())
+    )
+    charges, meta = paginate_scalars(
+        db=db,
+        base_query=base_query,
+        offset=pagination.offset,
+        limit=pagination.limit,
+        search=pagination.search,
+        search_columns=[Charge.description, Charge.period],
+    )
+    _, total = get_unpaid_charges_for_student(db=db, school_id=school_id, student_id=student.id)
+    return {"items": [serialize_charge_response(charge) for charge in charges], "pagination": meta, "total_unpaid_amount": total}
+
+
+@router.get("/{student_id}/financial-summary", response_model=StudentFinancialSummaryResponse)
+def get_student_financial_summary_endpoint(
+    student_id: int,
+    school_id: int = Depends(get_current_school_id),
+    current_user: User = Depends(require_authenticated),
+    memberships: list[UserSchoolRole] = Depends(get_current_school_memberships),
+    db: Session = Depends(get_db),
+):
+    student = get_visible_student_for_user(
+        db=db,
+        student_id=student_id,
+        school_id=school_id,
+        user_id=current_user.id,
+        is_admin=any(link.role == UserRole.admin.value for link in memberships),
+    )
+    if student is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
+    return get_student_financial_summary(db=db, school_id=school_id, student_id=student.id)
 
 
 @router.put("/{student_id}", response_model=StudentResponse, dependencies=[Depends(require_school_admin)])

@@ -1,11 +1,13 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.application.errors import ConflictError, NotFoundError
 from app.application.services.association_sync_service import apply_partial_sync_operations_from_existing_keys
-from app.infrastructure.db.models import School, Student, StudentSchool, User, UserStudent
+from app.domain.charge_enums import ChargeStatus
+from app.infrastructure.db.models import Charge, Payment, School, Student, StudentSchool, User, UserStudent
 from app.interfaces.api.v1.schemas.student import StudentAssociationsUpdate, StudentCreate, StudentUpdate
 
 
@@ -272,3 +274,63 @@ def apply_student_association_updates(db: Session, student: Student, association
         apply_add=apply_add_school,
         apply_remove=apply_remove_school,
     )
+
+
+def get_student_financial_summary(db: Session, *, school_id: int, student_id: int) -> dict:
+    charged_total = db.execute(
+        select(func.coalesce(func.sum(Charge.amount), 0)).where(
+            Charge.school_id == school_id,
+            Charge.student_id == student_id,
+            Charge.deleted_at.is_(None),
+            Charge.status != ChargeStatus.cancelled,
+            Charge.amount > Decimal("0.00"),
+        )
+    ).scalar_one()
+    unpaid_net_total = db.execute(
+        select(func.coalesce(func.sum(Charge.amount), 0)).where(
+            Charge.school_id == school_id,
+            Charge.student_id == student_id,
+            Charge.deleted_at.is_(None),
+            Charge.status == ChargeStatus.unpaid,
+        )
+    ).scalar_one()
+    unpaid_debt_total = db.execute(
+        select(func.coalesce(func.sum(Charge.amount), 0)).where(
+            Charge.school_id == school_id,
+            Charge.student_id == student_id,
+            Charge.deleted_at.is_(None),
+            Charge.status == ChargeStatus.unpaid,
+            Charge.amount > Decimal("0.00"),
+        )
+    ).scalar_one()
+    unpaid_credit_raw = db.execute(
+        select(func.coalesce(func.sum(Charge.amount), 0)).where(
+            Charge.school_id == school_id,
+            Charge.student_id == student_id,
+            Charge.deleted_at.is_(None),
+            Charge.status == ChargeStatus.unpaid,
+            Charge.amount < Decimal("0.00"),
+        )
+    ).scalar_one()
+    paid_total = db.execute(
+        select(func.coalesce(func.sum(Payment.amount), 0)).where(
+            Payment.school_id == school_id,
+            Payment.student_id == student_id,
+            Payment.deleted_at.is_(None),
+        )
+    ).scalar_one()
+
+    total_unpaid_amount = Decimal(unpaid_net_total).quantize(Decimal("0.01"))
+    total_unpaid_debt_amount = Decimal(unpaid_debt_total).quantize(Decimal("0.01"))
+    total_unpaid_credit_amount = abs(Decimal(unpaid_credit_raw).quantize(Decimal("0.01")))
+    total_charged_amount = Decimal(charged_total).quantize(Decimal("0.01"))
+    total_paid_amount = Decimal(paid_total).quantize(Decimal("0.01"))
+
+    return {
+        "total_unpaid_amount": total_unpaid_amount,
+        "total_unpaid_debt_amount": total_unpaid_debt_amount,
+        "total_unpaid_credit_amount": total_unpaid_credit_amount,
+        "total_charged_amount": total_charged_amount,
+        "total_paid_amount": total_paid_amount,
+        "account_status": "ok" if total_unpaid_amount <= Decimal("0.00") else "owes",
+    }

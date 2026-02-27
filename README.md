@@ -176,6 +176,8 @@ Frontend admin association actions for user-school and student-school use the ac
 - `PUT /api/v1/charges/{charge_id}` (admin only, updates active-school charge)
 - `DELETE /api/v1/charges/{charge_id}` (admin only, soft delete + status `cancelled`)
 - `GET /api/v1/students/{student_id}/charges/unpaid` (admin only; returns unpaid items and `total_unpaid_amount`)
+- `GET /api/v1/students/{student_id}/charges/unpaid` (visibility-aware; paginated/searchable unpaid items and `total_unpaid_amount`)
+- `GET /api/v1/students/{student_id}/financial-summary` (visibility-aware; school-scoped all-time totals for unpaid/charged/paid and account status)
 - Charge status values: `paid`, `unpaid`, `cancelled`
 - Charge type values: `fee`, `interest`, `penalty`
 - `debt_created_at` is required for charge create/update flows
@@ -252,7 +254,7 @@ Frontend admin association actions for user-school and student-school use the ac
 - Sidebar sections:
   - `Dashboard`
   - `Configuration` (admin only): `Users`, `Students`, `Schools`, `Fees`, `Charges`
-  - `Students` (one submenu item per student associated with current user in active school, including `Billing` and `Payments`)
+  - `Students` (one item per student associated with current user in active school)
 - Top-right area includes:
   - school selector (switches active `X-School-Id` context)
   - avatar shortcut to `/profile`
@@ -260,14 +262,15 @@ Frontend admin association actions for user-school and student-school use the ac
   - server-side search and pagination (`offset`, `limit`, `search`)
   - create/edit modals
   - row delete actions with confirmation
-- Student billing views support:
-  - invoice list with server-side search/pagination
-  - invoice detail with nested line items
-  - lightweight print action (`window.print`)
-  - admin-only manual invoice generation button
-- Student payments view supports:
-  - read-only payment list with server-side search/pagination
-  - navigation from student page, sidebar student submenu, and admin configuration student rows
+- Student dashboard view supports:
+  - financial summary cards and summary table (unpaid, charged, paid, debt, credit, account status)
+  - unpaid charges table with server-side search/pagination
+  - invoices table with server-side search/pagination, payment action modal, and admin-only manual generation button
+  - payments table with server-side search/pagination
+  - payment button behavior:
+    - disabled when there is no open invoice (`There is no open invoice`)
+    - disabled when open invoice is overdue (`Invoice is due. Generate a new one`)
+    - enabled only for non-overdue open invoice and submits `POST /api/v1/payments`
 - User create/edit modals include school-role assignment management:
   - table of assigned school + role rows
   - school selector + role selector + add button
@@ -310,7 +313,7 @@ And also creates:
 - Log in as `admin@example.com` / `admin123`
 - Switch school selector to `tc-lab`
 - TC fixture dates are seeded with a rolling month anchor based on the current date, so scenarios stay valid over time
-- Open `Configuration > Students`, search by `TC-XX`, then use `Billing` and `Payments` buttons
+- Open `Configuration > Students`, search by `TC-XX`, then open the student dashboard by clicking the student ID
 - For generation scenarios (`TC-07`..`TC-10`, `TC-14`, `TC-15`), use the `Generate Invoice` button on billing view
 - For payment scenarios (`TC-01`..`TC-06`, `TC-11`..`TC-13`), create payments against the open invoice and validate charge/invoice transitions
 

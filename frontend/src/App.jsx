@@ -23,6 +23,17 @@ function currentDateTimeLocal() {
   return toDateTimeLocal(new Date().toISOString());
 }
 
+function isInvoiceOverdue(invoice) {
+  if (!invoice?.due_date) {
+    return false;
+  }
+  const dueDate = new Date(`${invoice.due_date}T23:59:59Z`);
+  if (Number.isNaN(dueDate.getTime())) {
+    return false;
+  }
+  return new Date() > dueDate;
+}
+
 function usePublicHealth() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -160,91 +171,519 @@ function ProfilePage({ me, selectedSchool }) {
 
 function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
   const { studentId } = useParams();
+  const navigate = useNavigate();
   const [student, setStudent] = useState(null);
-  const [unpaid, setUnpaid] = useState({ items: [], total_unpaid_amount: "0.00" });
+  const [summary, setSummary] = useState(null);
+  const [unpaidRows, setUnpaidRows] = useState([]);
+  const [unpaidPagination, setUnpaidPagination] = useState(null);
+  const [unpaidSearch, setUnpaidSearch] = useState("");
+  const [unpaidOffset, setUnpaidOffset] = useState(0);
+  const [invoiceRows, setInvoiceRows] = useState([]);
+  const [invoicePagination, setInvoicePagination] = useState(null);
+  const [invoiceSearch, setInvoiceSearch] = useState("");
+  const [invoiceOffset, setInvoiceOffset] = useState(0);
+  const [paymentRows, setPaymentRows] = useState([]);
+  const [paymentPagination, setPaymentPagination] = useState(null);
+  const [paymentSearch, setPaymentSearch] = useState("");
+  const [paymentOffset, setPaymentOffset] = useState(0);
+  const [createChargeModalOpen, setCreateChargeModalOpen] = useState(false);
+  const [createChargeForm, setCreateChargeForm] = useState({
+    description: "",
+    amount: "",
+    period: "",
+    debt_created_at: currentDateTimeLocal(),
+    due_date: "",
+    charge_type: "fee",
+  });
+  const [payModalOpen, setPayModalOpen] = useState(false);
+  const [payForm, setPayForm] = useState({ amount: "", method: "transfer", paid_at: currentDateTimeLocal() });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
+  const openInvoice = useMemo(() => {
+    const openRows = invoiceRows.filter((row) => row.status === "open");
+    if (openRows.length === 0) {
+      return null;
+    }
+    return [...openRows].sort((a, b) => b.id - a.id)[0];
+  }, [invoiceRows]);
+
+  const payButtonDisabledReason = useMemo(() => {
+    if (!openInvoice) {
+      return "There is no open invoice";
+    }
+    if (isInvoiceOverdue(openInvoice)) {
+      return "Invoice is due. Generate a new one";
+    }
+    return "";
+  }, [openInvoice]);
+
+  async function loadUnpaid(nextOffset = unpaidOffset, nextSearch = unpaidSearch) {
+    const query = new URLSearchParams({ offset: String(nextOffset), limit: String(DEFAULT_LIMIT) });
+    if (nextSearch.trim()) {
+      query.set("search", nextSearch.trim());
+    }
+    const payload = await request(`/api/v1/students/${studentId}/charges/unpaid?${query.toString()}`);
+    setUnpaidRows(payload.items ?? []);
+    setUnpaidPagination(payload.pagination ?? null);
+    return payload;
+  }
+
+  async function loadInvoices(nextOffset = invoiceOffset, nextSearch = invoiceSearch) {
+    const query = new URLSearchParams({ offset: String(nextOffset), limit: String(DEFAULT_LIMIT) });
+    if (nextSearch.trim()) {
+      query.set("search", nextSearch.trim());
+    }
+    const payload = await request(`/api/v1/students/${studentId}/invoices?${query.toString()}`);
+    setInvoiceRows(payload.items ?? []);
+    setInvoicePagination(payload.pagination ?? null);
+  }
+
+  async function loadPayments(nextOffset = paymentOffset, nextSearch = paymentSearch) {
+    const query = new URLSearchParams({ offset: String(nextOffset), limit: String(DEFAULT_LIMIT) });
+    if (nextSearch.trim()) {
+      query.set("search", nextSearch.trim());
+    }
+    const payload = await request(`/api/v1/students/${studentId}/payments?${query.toString()}`);
+    setPaymentRows(payload.items ?? []);
+    setPaymentPagination(payload.pagination ?? null);
+  }
+
+  async function refreshStudentDashboardData() {
+    const summaryPayload = await request(`/api/v1/students/${studentId}/financial-summary`);
+    setSummary(summaryPayload);
+    await Promise.all([
+      loadUnpaid(unpaidOffset, unpaidSearch),
+      loadInvoices(invoiceOffset, invoiceSearch),
+      loadPayments(paymentOffset, paymentSearch),
+    ]);
+  }
+
   useEffect(() => {
-    async function loadStudent() {
+    async function loadStudentDashboard() {
       if (!selectedSchoolId || !studentId) {
         return;
       }
       setLoading(true);
       setError("");
       try {
-        const requests = [request(`/api/v1/students/${studentId}`)];
-        if (isSchoolAdmin) {
-          requests.push(request(`/api/v1/students/${studentId}/charges/unpaid`));
-        }
-        const [studentPayload, unpaidPayload] = await Promise.all(requests);
-        const payload = studentPayload;
-        setStudent(payload);
-        if (isSchoolAdmin && unpaidPayload) {
-          setUnpaid({
-            items: unpaidPayload.items ?? [],
-            total_unpaid_amount: unpaidPayload.total_unpaid_amount ?? "0.00",
-          });
-        } else {
-          setUnpaid({ items: [], total_unpaid_amount: "0.00" });
-        }
+        setUnpaidOffset(0);
+        setInvoiceOffset(0);
+        setPaymentOffset(0);
+        setUnpaidSearch("");
+        setInvoiceSearch("");
+        setPaymentSearch("");
+        const [studentPayload, summaryPayload] = await Promise.all([
+          request(`/api/v1/students/${studentId}`),
+          request(`/api/v1/students/${studentId}/financial-summary`),
+        ]);
+        setStudent(studentPayload);
+        setSummary(summaryPayload);
+        await Promise.all([loadUnpaid(0, ""), loadInvoices(0, ""), loadPayments(0, "")]);
       } catch (err) {
         setError(err.message);
         setStudent(null);
-        setUnpaid({ items: [], total_unpaid_amount: "0.00" });
+        setSummary(null);
+        setUnpaidRows([]);
+        setInvoiceRows([]);
+        setPaymentRows([]);
       } finally {
         setLoading(false);
       }
     }
-    loadStudent();
-  }, [selectedSchoolId, studentId, request, isSchoolAdmin]);
+    loadStudentDashboard();
+  }, [selectedSchoolId, studentId]);
+
+  useEffect(() => {
+    if (!selectedSchoolId || !studentId) {
+      return;
+    }
+    loadUnpaid(unpaidOffset, unpaidSearch).catch((err) => setError(err.message));
+  }, [unpaidOffset]);
+
+  useEffect(() => {
+    if (!selectedSchoolId || !studentId) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setUnpaidOffset(0);
+      loadUnpaid(0, unpaidSearch).catch((err) => setError(err.message));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [unpaidSearch]);
+
+  useEffect(() => {
+    if (!selectedSchoolId || !studentId) {
+      return;
+    }
+    loadInvoices(invoiceOffset, invoiceSearch).catch((err) => setError(err.message));
+  }, [invoiceOffset]);
+
+  useEffect(() => {
+    if (!selectedSchoolId || !studentId) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setInvoiceOffset(0);
+      loadInvoices(0, invoiceSearch).catch((err) => setError(err.message));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [invoiceSearch]);
+
+  useEffect(() => {
+    if (!selectedSchoolId || !studentId) {
+      return;
+    }
+    loadPayments(paymentOffset, paymentSearch).catch((err) => setError(err.message));
+  }, [paymentOffset]);
+
+  useEffect(() => {
+    if (!selectedSchoolId || !studentId) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setPaymentOffset(0);
+      loadPayments(0, paymentSearch).catch((err) => setError(err.message));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [paymentSearch]);
 
   return (
     <section className="page-card">
-      <SectionTitle>Student</SectionTitle>
+      <SectionTitle>Student Financial Dashboard</SectionTitle>
       {loading && <p className="muted">Loading student...</p>}
       {error && <p className="error">{error}</p>}
       {student && (
         <>
-          <p>
-            {student.first_name} {student.last_name}
-          </p>
           <div className="row-actions">
-            <NavLink className="ghost action-link" to={`/students/${student.id}/billing`}>
-              Billing
-            </NavLink>
-            <NavLink className="ghost action-link" to={`/students/${student.id}/payments`}>
-              Payments
-            </NavLink>
+            <p>
+              {student.first_name} {student.last_name}
+            </p>
+            <button
+              className="ghost"
+              disabled={!openInvoice}
+              onClick={() => {
+                if (!openInvoice) {
+                  return;
+                }
+                navigate(`/students/${studentId}/billing/${openInvoice.id}`);
+              }}
+              type="button"
+            >
+              View Open Invoice
+            </button>
+            <button
+              className="ghost"
+              disabled={Boolean(payButtonDisabledReason)}
+              onClick={() => {
+                if (!openInvoice) {
+                  return;
+                }
+                setPayForm({
+                  amount: openInvoice.total_amount ? String(openInvoice.total_amount) : "",
+                  method: "transfer",
+                  paid_at: currentDateTimeLocal(),
+                });
+                setPayModalOpen(true);
+              }}
+              type="button"
+            >
+              Pay
+            </button>
           </div>
-          {isSchoolAdmin && (
-            <div className="association-box">
-              <p className="muted">Unpaid charges total: {unpaid.total_unpaid_amount}</p>
-              <table>
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Description</th>
-                    <th>Amount</th>
-                    <th>Due date</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {unpaid.items.map((charge) => (
-                    <tr key={charge.id}>
-                      <td>{charge.id}</td>
-                      <td>{charge.description}</td>
-                      <td>{charge.amount}</td>
-                      <td>{charge.due_date}</td>
-                      <td>{charge.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {!openInvoice && <p className="muted">There is no open invoice</p>}
+          {openInvoice && payButtonDisabledReason && <p className="muted">{payButtonDisabledReason}</p>}
+          <div className="kv-grid">
+            <div>
+              <span className="muted">Account status</span>
+              <p>{summary?.account_status ?? "-"}</p>
             </div>
-          )}
+            <div>
+              <span className="muted">Net unpaid</span>
+              <p>{summary?.total_unpaid_amount ?? "0.00"}</p>
+            </div>
+            <div>
+              <span className="muted">Total charged</span>
+              <p>{summary?.total_charged_amount ?? "0.00"}</p>
+            </div>
+            <div>
+              <span className="muted">Total paid</span>
+              <p>{summary?.total_paid_amount ?? "0.00"}</p>
+            </div>
+            <div>
+              <span className="muted">Unpaid debt</span>
+              <p>{summary?.total_unpaid_debt_amount ?? "0.00"}</p>
+            </div>
+            <div>
+              <span className="muted">Available credit</span>
+              <p>{summary?.total_unpaid_credit_amount ?? "0.00"}</p>
+            </div>
+          </div>
+
+          <div className="association-box">
+            <p className="muted">Unpaid charges</p>
+            <div className="toolbar">
+              <input
+                placeholder="Search unpaid charges..."
+                value={unpaidSearch}
+                onChange={(event) => setUnpaidSearch(event.target.value)}
+              />
+              {isSchoolAdmin && (
+                <button
+                  className="ghost"
+                  onClick={() => {
+                    setCreateChargeForm({
+                      description: "",
+                      amount: "",
+                      period: "",
+                      debt_created_at: currentDateTimeLocal(),
+                      due_date: "",
+                      charge_type: "fee",
+                    });
+                    setCreateChargeModalOpen(true);
+                  }}
+                  type="button"
+                >
+                  Add Charge
+                </button>
+              )}
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Description</th>
+                  <th>Amount</th>
+                  <th>Due date</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {unpaidRows.map((charge) => (
+                  <tr key={charge.id}>
+                    <td>{charge.id}</td>
+                    <td>{charge.description}</td>
+                    <td>{charge.amount}</td>
+                    <td>{charge.due_date}</td>
+                    <td>{charge.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <PaginationControls pagination={unpaidPagination} onChange={setUnpaidOffset} />
+          </div>
+
+          <div className="association-box">
+            <p className="muted">Invoices</p>
+            <div className="toolbar">
+              <input
+                placeholder="Search invoices..."
+                value={invoiceSearch}
+                onChange={(event) => setInvoiceSearch(event.target.value)}
+              />
+              {isSchoolAdmin && (
+                <button
+                  className="ghost"
+                  onClick={async () => {
+                    try {
+                      setError("");
+                      await request(`/api/v1/students/${studentId}/invoices/generate`, { method: "POST" });
+                      await refreshStudentDashboardData();
+                    } catch (err) {
+                      setError(err.message);
+                    }
+                  }}
+                  type="button"
+                >
+                  Generate Invoice
+                </button>
+              )}
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Period</th>
+                  <th>Issued</th>
+                  <th>Due</th>
+                  <th>Total</th>
+                  <th>Status</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {invoiceRows.map((row) => (
+                  <tr key={row.id}>
+                    <td>{row.id}</td>
+                    <td>{row.period}</td>
+                    <td>{row.issued_at}</td>
+                    <td>{row.due_date}</td>
+                    <td>{row.total_amount}</td>
+                    <td>{row.status}</td>
+                    <td className="row-actions">
+                      <NavLink className="ghost action-link" to={`/students/${studentId}/billing/${row.id}`}>
+                        Open
+                      </NavLink>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <PaginationControls pagination={invoicePagination} onChange={setInvoiceOffset} />
+          </div>
+
+          <div className="association-box">
+            <p className="muted">Payments</p>
+            <div className="toolbar">
+              <input
+                placeholder="Search payments..."
+                value={paymentSearch}
+                onChange={(event) => setPaymentSearch(event.target.value)}
+              />
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Amount</th>
+                  <th>Paid at</th>
+                  <th>Method</th>
+                  <th>Invoice</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paymentRows.map((row) => (
+                  <tr key={row.id}>
+                    <td>{row.id}</td>
+                    <td>{row.amount}</td>
+                    <td>{row.paid_at}</td>
+                    <td>{row.method}</td>
+                    <td>{row.invoice ? `#${row.invoice.id}` : "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <PaginationControls pagination={paymentPagination} onChange={setPaymentOffset} />
+          </div>
         </>
+      )}
+      {payModalOpen && openInvoice && (
+        <Modal
+          title={`Pay invoice #${openInvoice.id}`}
+          onClose={() => setPayModalOpen(false)}
+          onSubmit={async () => {
+            try {
+              setError("");
+              const paidAtIso = payForm.paid_at ? new Date(payForm.paid_at).toISOString() : new Date().toISOString();
+              await request("/api/v1/payments", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  student_id: Number(studentId),
+                  invoice_id: openInvoice.id,
+                  amount: payForm.amount,
+                  paid_at: paidAtIso,
+                  method: payForm.method,
+                }),
+              });
+              setPayModalOpen(false);
+              await refreshStudentDashboardData();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Pay"
+        >
+          <p className="muted">Invoice total: {openInvoice.total_amount}</p>
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Amount"
+            value={payForm.amount}
+            onChange={(event) => setPayForm({ ...payForm, amount: event.target.value })}
+          />
+          <select value={payForm.method} onChange={(event) => setPayForm({ ...payForm, method: event.target.value })}>
+            <option value="transfer">transfer</option>
+            <option value="cash">cash</option>
+            <option value="card">card</option>
+          </select>
+          <input
+            type="datetime-local"
+            value={payForm.paid_at}
+            onChange={(event) => setPayForm({ ...payForm, paid_at: event.target.value })}
+          />
+        </Modal>
+      )}
+      {createChargeModalOpen && (
+        <Modal
+          title={`Add charge for ${student?.first_name ?? ""} ${student?.last_name ?? ""}`.trim()}
+          onClose={() => setCreateChargeModalOpen(false)}
+          onSubmit={async () => {
+            try {
+              setError("");
+              await request("/api/v1/charges", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  student_id: Number(studentId),
+                  fee_definition_id: null,
+                  description: createChargeForm.description,
+                  amount: createChargeForm.amount,
+                  period: createChargeForm.period || null,
+                  debt_created_at: createChargeForm.debt_created_at
+                    ? new Date(createChargeForm.debt_created_at).toISOString()
+                    : new Date().toISOString(),
+                  due_date: createChargeForm.due_date,
+                  charge_type: createChargeForm.charge_type,
+                  status: "unpaid",
+                }),
+              });
+              setCreateChargeModalOpen(false);
+              await refreshStudentDashboardData();
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Create charge"
+        >
+          <input
+            placeholder="Description"
+            value={createChargeForm.description}
+            onChange={(event) => setCreateChargeForm({ ...createChargeForm, description: event.target.value })}
+          />
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Amount"
+            value={createChargeForm.amount}
+            onChange={(event) => setCreateChargeForm({ ...createChargeForm, amount: event.target.value })}
+          />
+          <input
+            placeholder="Period (YYYY-MM)"
+            value={createChargeForm.period}
+            onChange={(event) => setCreateChargeForm({ ...createChargeForm, period: event.target.value })}
+          />
+          <input
+            type="datetime-local"
+            value={createChargeForm.debt_created_at}
+            onChange={(event) => setCreateChargeForm({ ...createChargeForm, debt_created_at: event.target.value })}
+          />
+          <input
+            type="date"
+            value={createChargeForm.due_date}
+            onChange={(event) => setCreateChargeForm({ ...createChargeForm, due_date: event.target.value })}
+          />
+          <select
+            value={createChargeForm.charge_type}
+            onChange={(event) => setCreateChargeForm({ ...createChargeForm, charge_type: event.target.value })}
+          >
+            {CHARGE_TYPE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </Modal>
       )}
     </section>
   );
@@ -369,7 +808,22 @@ function StudentBillingPage({ selectedSchoolId, request, isSchoolAdmin }) {
 function InvoiceDetailPage({ selectedSchoolId, request }) {
   const { invoiceId } = useParams();
   const [invoice, setInvoice] = useState(null);
+  const [payModalOpen, setPayModalOpen] = useState(false);
+  const [payForm, setPayForm] = useState({ amount: "", method: "transfer", paid_at: currentDateTimeLocal() });
   const [error, setError] = useState("");
+
+  const payDisabledReason = useMemo(() => {
+    if (!invoice) {
+      return "There is no open invoice";
+    }
+    if (invoice.status !== "open") {
+      return "There is no open invoice";
+    }
+    if (isInvoiceOverdue(invoice)) {
+      return "Invoice is due. Generate a new one";
+    }
+    return "";
+  }, [invoice]);
 
   useEffect(() => {
     async function loadInvoice() {
@@ -424,7 +878,26 @@ function InvoiceDetailPage({ selectedSchoolId, request }) {
             <button className="ghost" onClick={() => window.print()} type="button">
               Print
             </button>
+            <button
+              className="ghost"
+              disabled={Boolean(payDisabledReason)}
+              onClick={() => {
+                if (!invoice) {
+                  return;
+                }
+                setPayForm({
+                  amount: invoice.total_amount ? String(invoice.total_amount) : "",
+                  method: "transfer",
+                  paid_at: currentDateTimeLocal(),
+                });
+                setPayModalOpen(true);
+              }}
+              type="button"
+            >
+              Pay
+            </button>
           </div>
+          {payDisabledReason && <p className="muted">{payDisabledReason}</p>}
           <table>
             <thead>
               <tr>
@@ -446,6 +919,54 @@ function InvoiceDetailPage({ selectedSchoolId, request }) {
             </tbody>
           </table>
         </>
+      )}
+      {payModalOpen && invoice && (
+        <Modal
+          title={`Pay invoice #${invoice.id}`}
+          onClose={() => setPayModalOpen(false)}
+          onSubmit={async () => {
+            try {
+              setError("");
+              const paidAtIso = payForm.paid_at ? new Date(payForm.paid_at).toISOString() : new Date().toISOString();
+              await request("/api/v1/payments", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  student_id: invoice.student_id,
+                  invoice_id: invoice.id,
+                  amount: payForm.amount,
+                  paid_at: paidAtIso,
+                  method: payForm.method,
+                }),
+              });
+              setPayModalOpen(false);
+              const payload = await request(`/api/v1/invoices/${invoiceId}`);
+              setInvoice(payload);
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          submitLabel="Pay"
+        >
+          <p className="muted">Invoice total: {invoice.total_amount}</p>
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Amount"
+            value={payForm.amount}
+            onChange={(event) => setPayForm({ ...payForm, amount: event.target.value })}
+          />
+          <select value={payForm.method} onChange={(event) => setPayForm({ ...payForm, method: event.target.value })}>
+            <option value="transfer">transfer</option>
+            <option value="cash">cash</option>
+            <option value="card">card</option>
+          </select>
+          <input
+            type="datetime-local"
+            value={payForm.paid_at}
+            onChange={(event) => setPayForm({ ...payForm, paid_at: event.target.value })}
+          />
+        </Modal>
       )}
     </section>
   );
@@ -1184,12 +1705,6 @@ function StudentsConfigPage({ request, selectedSchoolId }) {
               <td>{row.last_name}</td>
               <td>{row.external_id ?? "-"}</td>
               <td className="row-actions">
-                <NavLink className="ghost action-link" to={`/students/${row.id}/billing`}>
-                  Billing
-                </NavLink>
-                <NavLink className="ghost action-link" to={`/students/${row.id}/payments`}>
-                  Payments
-                </NavLink>
                 <button className="ghost" onClick={() => openEdit(row)} type="button">
                   Edit
                 </button>
@@ -2282,13 +2797,9 @@ function Sidebar({ isSchoolAdmin, myStudents, selectedSchoolId }) {
           <p>Students</p>
           {myStudents.length === 0 && <span className="muted">No students</span>}
           {myStudents.map((student) => (
-            <div key={student.id} className="sidebar-group">
-              <NavLink to={`/students/${student.id}`}>
-                {student.first_name} {student.last_name}
-              </NavLink>
-              <NavLink to={`/students/${student.id}/billing`}>Billing</NavLink>
-              <NavLink to={`/students/${student.id}/payments`}>Payments</NavLink>
-            </div>
+            <NavLink key={student.id} to={`/students/${student.id}`}>
+              {student.first_name} {student.last_name}
+            </NavLink>
           ))}
         </div>
 
@@ -2364,11 +2875,11 @@ function AppLayout({
           />
           <Route
             path="/students/:studentId/billing"
-            element={<StudentBillingPage selectedSchoolId={selectedSchoolId} request={request} isSchoolAdmin={isSchoolAdmin} />}
+            element={<StudentDetailPage selectedSchoolId={selectedSchoolId} request={request} isSchoolAdmin={isSchoolAdmin} />}
           />
           <Route
             path="/students/:studentId/payments"
-            element={<StudentPaymentsPage selectedSchoolId={selectedSchoolId} request={request} />}
+            element={<StudentDetailPage selectedSchoolId={selectedSchoolId} request={request} isSchoolAdmin={isSchoolAdmin} />}
           />
           <Route
             path="/students/:studentId/billing/:invoiceId"

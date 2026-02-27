@@ -1,5 +1,9 @@
+from datetime import date, datetime, timezone
+
+from app.domain.charge_enums import ChargeStatus, ChargeType
+from app.domain.invoice_status import InvoiceStatus
 from tests.helpers.auth import school_header, token_for_user
-from tests.helpers.factories import create_student, link_student_school, link_user_student
+from tests.helpers.factories import create_charge, create_invoice, create_payment, create_student, link_student_school, link_user_student
 
 
 def test_get_students_returns_200_for_school_admin(client, seeded_users):
@@ -240,6 +244,103 @@ def test_get_student_returns_404_for_missing_student(client, seeded_users):
     response = client.get(
         "/api/v1/students/999999",
         headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 404
+
+
+def test_get_student_financial_summary_returns_200_for_admin(client, seeded_users, db_session):
+    """
+    Validate student financial summary success for admin users.
+
+    1. Seed mixed unpaid charges plus one payment for visible student.
+    2. Call financial summary endpoint once as admin.
+    3. Receive successful response payload.
+    4. Validate totals and account status values.
+    """
+    invoice = create_invoice(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_one"].id,
+        period="2026-06",
+        issued_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 6, 10),
+        total_amount="100.00",
+        status=InvoiceStatus.open,
+    )
+    create_charge(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_one"].id,
+        description="Debt A",
+        amount="100.00",
+        due_date=date(2026, 6, 10),
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.unpaid,
+        invoice_id=invoice.id,
+    )
+    create_charge(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_one"].id,
+        description="Carry",
+        amount="-25.00",
+        due_date=date(2026, 6, 10),
+        charge_type=ChargeType.penalty,
+        status=ChargeStatus.unpaid,
+        invoice_id=invoice.id,
+    )
+    create_payment(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_one"].id,
+        invoice_id=invoice.id,
+        amount="40.00",
+        paid_at=datetime(2026, 6, 5, tzinfo=timezone.utc),
+    )
+    response = client.get(
+        f"/api/v1/students/{seeded_users['child_one'].id}/financial-summary",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_charged_amount"] == "100.00"
+    assert payload["total_paid_amount"] == "40.00"
+    assert payload["total_unpaid_debt_amount"] == "100.00"
+    assert payload["total_unpaid_credit_amount"] == "25.00"
+    assert payload["total_unpaid_amount"] == "75.00"
+    assert payload["account_status"] == "owes"
+
+
+def test_get_student_financial_summary_returns_200_for_visible_non_admin(client, seeded_users):
+    """
+    Validate student financial summary success for associated non-admin users.
+
+    1. Build associated non-admin school-scoped header.
+    2. Call financial summary endpoint once.
+    3. Receive successful response.
+    4. Validate totals keys are present.
+    """
+    response = client.get(
+        f"/api/v1/students/{seeded_users['child_one'].id}/financial-summary",
+        headers=school_header(token_for_user(seeded_users["student"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    assert "total_unpaid_amount" in response.json()
+    assert "total_paid_amount" in response.json()
+
+
+def test_get_student_financial_summary_returns_404_for_non_visible_non_admin(client, seeded_users):
+    """
+    Validate financial summary hidden branch for non-visible students.
+
+    1. Build non-admin header without association to target student.
+    2. Call financial summary endpoint once.
+    3. Receive not found response.
+    4. Validate hidden students return 404.
+    """
+    response = client.get(
+        f"/api/v1/students/{seeded_users['child_one'].id}/financial-summary",
+        headers=school_header(token_for_user(seeded_users["teacher"].id), seeded_users["north_school"].id),
     )
     assert response.status_code == 404
 
