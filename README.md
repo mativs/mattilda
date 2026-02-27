@@ -31,6 +31,23 @@ Starter environment for a take-home exercise with:
 - API docs (ReDoc): https://api-production-5dcd.up.railway.app/redoc
 - API: https://api-production-5dcd.up.railway.app/
 
+### Suggested manual checks
+
+- **Billing lifecycle (`tc-lab`)**
+  - Log in as `admin@example.com` / `admin123`.
+  - Switch to school `tc-lab`.
+  - Open `Configuration > Students` and search `TC-XX`.
+  - Validate invoice generation and payment behavior across seeded cases.
+
+- **Reconciliation workflow (`reconciliation-lab`)**
+  - Switch to school `reconciliation-lab`.
+  - Run reconciliation from dashboard or `Configuration > Reconciliation`.
+  - Validate findings are generated and visible in run details.
+
+- **Visibility rules (`visibility-lab`)**
+  - Use `teacher@example.com` / `teacher123` and `student@example.com` / `student123`.
+  - Confirm teacher sees assigned students and student sees only own record.
+
 ## Project structure
 
 ```text
@@ -152,23 +169,6 @@ If you only have a few minutes, follow this path:
 4. Review key implementation decisions:
    - `CONSIDERATIONS.md`
    - `TEST.md`
-
-### Suggested manual checks
-
-- **Billing lifecycle (`tc-lab`)**
-  - Log in as `admin@example.com` / `admin123`.
-  - Switch to school `tc-lab`.
-  - Open `Configuration > Students` and search `TC-XX`.
-  - Validate invoice generation and payment behavior across seeded cases.
-
-- **Reconciliation workflow (`reconciliation-lab`)**
-  - Switch to school `reconciliation-lab`.
-  - Run reconciliation from dashboard or `Configuration > Reconciliation`.
-  - Validate findings are generated and visible in run details.
-
-- **Visibility rules (`visibility-lab`)**
-  - Use `teacher@example.com` / `teacher123` and `student@example.com` / `student123`.
-  - Confirm teacher sees assigned students and student sees only own record.
 
 ## Related docs
 
