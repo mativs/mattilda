@@ -18,7 +18,6 @@ from app.interfaces.api.v1.dependencies.auth import (
     get_current_school_id,
     get_current_school_memberships,
     require_authenticated,
-    require_school_roles,
 )
 from app.interfaces.api.v1.dependencies.pagination import get_pagination_params
 from app.interfaces.api.v1.schemas.pagination import PaginationParams
@@ -31,13 +30,28 @@ router = APIRouter(tags=["payments"])
     "/payments",
     response_model=PaymentResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_school_roles([UserRole.admin]))],
 )
 def create_payment_endpoint(
     payload: PaymentCreate,
     school_id: int = Depends(get_current_school_id),
+    current_user: User = Depends(require_authenticated),
+    memberships: list[UserSchoolRole] = Depends(get_current_school_memberships),
     db: Session = Depends(get_db),
 ):
+    is_admin = any(link.role == UserRole.admin.value for link in memberships)
+    is_student = any(link.role == UserRole.student.value for link in memberships)
+    if not is_admin and not is_student:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient school permissions")
+    if not is_admin:
+        visible_student = get_visible_student_for_payment_access(
+            db=db,
+            student_id=payload.student_id,
+            school_id=school_id,
+            user_id=current_user.id,
+            is_admin=False,
+        )
+        if visible_student is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
     with payment_creation_lock(school_id=school_id, invoice_id=payload.invoice_id):
         payment = create_payment(db=db, school_id=school_id, payload=payload)
     return serialize_payment_response(payment)

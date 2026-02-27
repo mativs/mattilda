@@ -69,6 +69,74 @@ def test_create_payment_returns_403_for_non_admin(client, seeded_users):
     assert response.status_code == 403
 
 
+def test_create_payment_returns_201_for_student_on_visible_student(client, seeded_users, db_session):
+    """
+    Validate payment creation succeeds for student role on associated student.
+
+    1. Seed one invoice for a student associated to current student user.
+    2. Call create payment endpoint once as student role.
+    3. Receive created response payload.
+    4. Validate payment references requested student and invoice.
+    """
+    invoice = create_invoice(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_one"].id,
+        period="2026-03",
+        issued_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 3, 20),
+        total_amount="100.00",
+    )
+    response = client.post(
+        "/api/v1/payments",
+        headers=school_header(token_for_user(seeded_users["student"].id), seeded_users["north_school"].id),
+        json={
+            "student_id": seeded_users["child_one"].id,
+            "invoice_id": invoice.id,
+            "amount": "25.00",
+            "paid_at": "2026-03-08T12:00:00Z",
+            "method": "transfer",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["student_id"] == seeded_users["child_one"].id
+    assert response.json()["invoice"]["id"] == invoice.id
+
+
+def test_create_payment_returns_404_for_student_on_non_visible_student(client, seeded_users, db_session):
+    """
+    Validate payment creation for student role hides non-associated students.
+
+    1. Seed new student/invoice in active school not linked to current student user.
+    2. Call create payment endpoint once as student role.
+    3. Receive not-found response.
+    4. Validate non-visible student behaves as hidden resource.
+    """
+    hidden_student = create_student(db_session, "Hidden", "Pay", "PAY-HIDDEN-001")
+    link_student_school(db_session, hidden_student.id, seeded_users["north_school"].id)
+    invoice = create_invoice(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=hidden_student.id,
+        period="2026-03",
+        issued_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 3, 20),
+        total_amount="100.00",
+    )
+    response = client.post(
+        "/api/v1/payments",
+        headers=school_header(token_for_user(seeded_users["student"].id), seeded_users["north_school"].id),
+        json={
+            "student_id": hidden_student.id,
+            "invoice_id": invoice.id,
+            "amount": "25.00",
+            "paid_at": "2026-03-08T12:00:00Z",
+            "method": "transfer",
+        },
+    )
+    assert response.status_code == 404
+
+
 def test_create_payment_returns_400_for_overdue_invoice(client, seeded_users, db_session):
     """
     Validate payment creation rejects overdue invoices.

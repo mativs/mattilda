@@ -1186,6 +1186,41 @@ def seed_reconciliation_lab_fixtures(db: Session, *, admin: User) -> None:
     )
 
 
+def seed_visibility_lab_fixtures(db: Session, *, admin: User, teacher: User, student_user: User) -> None:
+    """
+    Seed role-visibility fixtures under visibility-lab school.
+
+    Scenario:
+    - one teacher associated to two students (can see both)
+    - one student user associated only to itself (can see only one)
+    """
+    visibility_school = create_school_if_missing(db=db, name="Visibility Lab", slug="visibility-lab")
+    create_membership_if_missing(db=db, user_id=admin.id, school_id=visibility_school.id, role=UserRole.admin)
+    create_membership_if_missing(db=db, user_id=teacher.id, school_id=visibility_school.id, role=UserRole.teacher)
+    create_membership_if_missing(db=db, user_id=student_user.id, school_id=visibility_school.id, role=UserRole.student)
+
+    student_a = create_student_if_missing(
+        db=db,
+        first_name="VIS-01",
+        last_name="TeacherVisibleA",
+        external_id="VIS-01-STU",
+    )
+    student_b = create_student_if_missing(
+        db=db,
+        first_name="VIS-02",
+        last_name="TeacherVisibleB",
+        external_id="VIS-02-STU",
+    )
+    associate_student_school_if_missing(db=db, student_id=student_a.id, school_id=visibility_school.id)
+    associate_student_school_if_missing(db=db, student_id=student_b.id, school_id=visibility_school.id)
+
+    # Teacher can see both students in this school.
+    associate_user_student_if_missing(db=db, user_id=teacher.id, student_id=student_a.id)
+    associate_user_student_if_missing(db=db, user_id=teacher.id, student_id=student_b.id)
+    # Student user can only see itself (student A) in this school.
+    associate_user_student_if_missing(db=db, user_id=student_user.id, student_id=student_a.id)
+
+
 def main() -> None:
     db = SessionLocal()
     try:
@@ -1195,13 +1230,13 @@ def main() -> None:
             password="admin123",
             profile=("Admin", "User"),
         )
-        create_user_if_missing(
+        teacher = create_user_if_missing(
             db=db,
             email="teacher@example.com",
             password="teacher123",
             profile=("Teacher", "User"),
         )
-        create_user_if_missing(
+        student_user = create_user_if_missing(
             db=db,
             email="student@example.com",
             password="student123",
@@ -1210,6 +1245,7 @@ def main() -> None:
 
         seed_tc_lab_fixtures(db=db, admin=admin)
         seed_reconciliation_lab_fixtures(db=db, admin=admin)
+        seed_visibility_lab_fixtures(db=db, admin=admin, teacher=teacher, student_user=student_user)
 
         db.commit()
     finally:
