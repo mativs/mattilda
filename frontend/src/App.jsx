@@ -23,6 +23,14 @@ function currentDateTimeLocal() {
   return toDateTimeLocal(new Date().toISOString());
 }
 
+function formatCurrency(value) {
+  const numeric = Number(value ?? 0);
+  if (Number.isNaN(numeric)) {
+    return "$0.00";
+  }
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(numeric);
+}
+
 function isInvoiceOverdue(invoice) {
   if (!invoice?.due_date) {
     return false;
@@ -126,15 +134,42 @@ function Modal({ title, children, onClose, onSubmit, submitLabel, danger = false
   );
 }
 
-function DashboardPage({ activeSchool }) {
+function DashboardPage({ activeSchool, isSchoolAdmin, schoolFinancialSummary }) {
   return (
     <section className="page-card">
       <SectionTitle>Dashboard</SectionTitle>
-      <p className="muted">This section is intentionally empty for now.</p>
       {activeSchool && (
-        <p>
-          Active school: <strong>{activeSchool.name}</strong>
-        </p>
+        <>
+          <p>
+            Active school: <strong>{activeSchool.name}</strong>
+          </p>
+          {isSchoolAdmin ? (
+            <div className="kv-grid">
+              <div>
+                <span className="muted">Billed (open invoices)</span>
+                <p>{formatCurrency(schoolFinancialSummary?.total_billed_amount)}</p>
+              </div>
+              <div>
+                <span className="muted">Total charged</span>
+                <p>{formatCurrency(schoolFinancialSummary?.total_charged_amount)}</p>
+              </div>
+              <div>
+                <span className="muted">Total paid</span>
+                <p>{formatCurrency(schoolFinancialSummary?.total_paid_amount)}</p>
+              </div>
+              <div>
+                <span className="muted">Pending to pay (net unpaid)</span>
+                <p>{formatCurrency(schoolFinancialSummary?.total_pending_amount)}</p>
+              </div>
+              <div>
+                <span className="muted">Students</span>
+                <p>{schoolFinancialSummary?.student_count ?? 0}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="muted">No financial metrics available for your role.</p>
+          )}
+        </>
       )}
     </section>
   );
@@ -400,23 +435,23 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
             </div>
             <div>
               <span className="muted">Net unpaid</span>
-              <p>{summary?.total_unpaid_amount ?? "0.00"}</p>
+              <p>{formatCurrency(summary?.total_unpaid_amount)}</p>
             </div>
             <div>
               <span className="muted">Total charged</span>
-              <p>{summary?.total_charged_amount ?? "0.00"}</p>
+              <p>{formatCurrency(summary?.total_charged_amount)}</p>
             </div>
             <div>
               <span className="muted">Total paid</span>
-              <p>{summary?.total_paid_amount ?? "0.00"}</p>
+              <p>{formatCurrency(summary?.total_paid_amount)}</p>
             </div>
             <div>
               <span className="muted">Unpaid debt</span>
-              <p>{summary?.total_unpaid_debt_amount ?? "0.00"}</p>
+              <p>{formatCurrency(summary?.total_unpaid_debt_amount)}</p>
             </div>
             <div>
               <span className="muted">Available credit</span>
-              <p>{summary?.total_unpaid_credit_amount ?? "0.00"}</p>
+              <p>{formatCurrency(summary?.total_unpaid_credit_amount)}</p>
             </div>
           </div>
 
@@ -463,7 +498,7 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
                   <tr key={charge.id}>
                     <td>{charge.id}</td>
                     <td>{charge.description}</td>
-                    <td>{charge.amount}</td>
+                    <td>{formatCurrency(charge.amount)}</td>
                     <td>{charge.due_date}</td>
                     <td>{charge.status}</td>
                   </tr>
@@ -518,7 +553,7 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
                     <td>{row.period}</td>
                     <td>{row.issued_at}</td>
                     <td>{row.due_date}</td>
-                    <td>{row.total_amount}</td>
+                    <td>{formatCurrency(row.total_amount)}</td>
                     <td>{row.status}</td>
                     <td className="row-actions">
                       <NavLink className="ghost action-link" to={`/students/${studentId}/billing/${row.id}`}>
@@ -555,7 +590,7 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
                 {paymentRows.map((row) => (
                   <tr key={row.id}>
                     <td>{row.id}</td>
-                    <td>{row.amount}</td>
+                    <td>{formatCurrency(row.amount)}</td>
                     <td>{row.paid_at}</td>
                     <td>{row.method}</td>
                     <td>{row.invoice ? `#${row.invoice.id}` : "-"}</td>
@@ -594,7 +629,7 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
           }}
           submitLabel="Pay"
         >
-          <p className="muted">Invoice total: {openInvoice.total_amount}</p>
+          <p className="muted">Invoice total: {formatCurrency(openInvoice.total_amount)}</p>
           <input
             type="number"
             step="0.01"
@@ -789,7 +824,7 @@ function StudentBillingPage({ selectedSchoolId, request, isSchoolAdmin }) {
               <td>{row.period}</td>
               <td>{row.issued_at}</td>
               <td>{row.due_date}</td>
-              <td>{row.total_amount}</td>
+              <td>{formatCurrency(row.total_amount)}</td>
               <td>{row.status}</td>
               <td className="row-actions">
                 <NavLink className="ghost action-link" to={`/students/${studentId}/billing/${row.id}`}>
@@ -867,7 +902,7 @@ function InvoiceDetailPage({ selectedSchoolId, request }) {
             </div>
             <div>
               <span className="muted">Total</span>
-              <p>{invoice.total_amount}</p>
+              <p>{formatCurrency(invoice.total_amount)}</p>
             </div>
             <div>
               <span className="muted">Status</span>
@@ -913,7 +948,7 @@ function InvoiceDetailPage({ selectedSchoolId, request }) {
                   <td>{item.id}</td>
                   <td>{item.description}</td>
                   <td>{item.charge_type}</td>
-                  <td>{item.amount}</td>
+                  <td>{formatCurrency(item.amount)}</td>
                 </tr>
               ))}
             </tbody>
@@ -948,7 +983,7 @@ function InvoiceDetailPage({ selectedSchoolId, request }) {
           }}
           submitLabel="Pay"
         >
-          <p className="muted">Invoice total: {invoice.total_amount}</p>
+          <p className="muted">Invoice total: {formatCurrency(invoice.total_amount)}</p>
           <input
             type="number"
             step="0.01"
@@ -1049,7 +1084,7 @@ function StudentPaymentsPage({ selectedSchoolId, request }) {
           {rows.map((row) => (
             <tr key={row.id}>
               <td>{row.id}</td>
-              <td>{row.amount}</td>
+              <td>{formatCurrency(row.amount)}</td>
               <td>{row.paid_at}</td>
               <td>{row.method}</td>
               <td>{row.invoice ? `#${row.invoice.id}` : "-"}</td>
@@ -2301,7 +2336,7 @@ function FeesConfigPage({ request, selectedSchoolId }) {
             <tr key={row.id}>
               <td>{row.id}</td>
               <td>{row.name}</td>
-              <td>{row.amount}</td>
+              <td>{formatCurrency(row.amount)}</td>
               <td>{row.recurrence}</td>
               <td>{row.is_active ? "yes" : "no"}</td>
               <td className="row-actions">
@@ -2568,7 +2603,7 @@ function ChargesConfigPage({ request, selectedSchoolId }) {
               <td>{row.id}</td>
               <td>{row.student ? `${row.student.first_name} ${row.student.last_name}` : `Student #${row.student_id}`}</td>
               <td>{row.description}</td>
-              <td>{row.amount}</td>
+              <td>{formatCurrency(row.amount)}</td>
               <td>{row.due_date}</td>
               <td>{row.charge_type}</td>
               <td>{row.status}</td>
@@ -2815,6 +2850,7 @@ function AppLayout({
   setSelectedSchoolId,
   selectedSchool,
   activeSchool,
+  schoolFinancialSummary,
   onLogout,
   isSchoolAdmin,
   myStudents,
@@ -2867,7 +2903,10 @@ function AppLayout({
         </header>
 
         <Routes>
-          <Route path="/dashboard" element={<DashboardPage activeSchool={activeSchool} />} />
+          <Route
+            path="/dashboard"
+            element={<DashboardPage activeSchool={activeSchool} isSchoolAdmin={isSchoolAdmin} schoolFinancialSummary={schoolFinancialSummary} />}
+          />
           <Route path="/profile" element={<ProfilePage me={me} selectedSchool={selectedSchool} />} />
           <Route
             path="/students/:studentId"
@@ -2921,6 +2960,7 @@ export default function App() {
   const [selectedSchoolId, setSelectedSchoolId] = useState(() => localStorage.getItem(SCHOOL_KEY) ?? "");
   const [me, setMe] = useState(null);
   const [activeSchool, setActiveSchool] = useState(null);
+  const [schoolFinancialSummary, setSchoolFinancialSummary] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(false);
   const [error, setError] = useState("");
   const [username, setUsername] = useState("admin@example.com");
@@ -3009,17 +3049,25 @@ export default function App() {
     async function loadActiveSchool() {
       if (!token || !selectedSchoolId) {
         setActiveSchool(null);
+        setSchoolFinancialSummary(null);
         return;
       }
       try {
         const payload = await authenticatedRequest(`/api/v1/schools/${selectedSchoolId}`);
         setActiveSchool(payload);
+        if (isSchoolAdmin) {
+          const summaryPayload = await authenticatedRequest(`/api/v1/schools/${selectedSchoolId}/financial-summary`);
+          setSchoolFinancialSummary(summaryPayload);
+        } else {
+          setSchoolFinancialSummary(null);
+        }
       } catch (_err) {
         setActiveSchool(null);
+        setSchoolFinancialSummary(null);
       }
     }
     loadActiveSchool();
-  }, [token, selectedSchoolId, me]);
+  }, [token, selectedSchoolId, me, isSchoolAdmin]);
 
   async function onLogin(event) {
     event.preventDefault();
@@ -3053,6 +3101,7 @@ export default function App() {
     setSelectedSchoolId("");
     setMe(null);
     setActiveSchool(null);
+    setSchoolFinancialSummary(null);
     navigate("/");
   }
 
@@ -3086,6 +3135,7 @@ export default function App() {
       setSelectedSchoolId={setSelectedSchoolId}
       selectedSchool={selectedSchool}
       activeSchool={activeSchool}
+      schoolFinancialSummary={schoolFinancialSummary}
       onLogout={onLogout}
       isSchoolAdmin={isSchoolAdmin}
       myStudents={myStudents}

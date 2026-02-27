@@ -1,11 +1,14 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.application.errors import ConflictError, NotFoundError
+from app.domain.charge_enums import ChargeStatus
+from app.domain.invoice_status import InvoiceStatus
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import School, User, UserSchoolRole
+from app.infrastructure.db.models import Charge, Invoice, Payment, School, Student, StudentSchool, User, UserSchoolRole
 from app.interfaces.api.v1.schemas.school import SchoolCreate, SchoolUpdate
 
 
@@ -166,3 +169,48 @@ def remove_user_school_roles(db: Session, school_id: int, user_id: int) -> None:
     for membership in memberships:
         db.delete(membership)
     db.commit()
+
+
+def get_school_financial_summary(db: Session, *, school_id: int) -> dict:
+    billed_total = db.execute(
+        select(func.coalesce(func.sum(Invoice.total_amount), 0)).where(
+            Invoice.school_id == school_id,
+            Invoice.deleted_at.is_(None),
+            Invoice.status == InvoiceStatus.open,
+        )
+    ).scalar_one()
+    charged_total = db.execute(
+        select(func.coalesce(func.sum(Charge.amount), 0)).where(
+            Charge.school_id == school_id,
+            Charge.deleted_at.is_(None),
+            Charge.status != ChargeStatus.cancelled,
+            Charge.amount > Decimal("0.00"),
+        )
+    ).scalar_one()
+    paid_total = db.execute(
+        select(func.coalesce(func.sum(Payment.amount), 0)).where(
+            Payment.school_id == school_id,
+            Payment.deleted_at.is_(None),
+        )
+    ).scalar_one()
+    pending_total = db.execute(
+        select(func.coalesce(func.sum(Charge.amount), 0)).where(
+            Charge.school_id == school_id,
+            Charge.deleted_at.is_(None),
+            Charge.status == ChargeStatus.unpaid,
+        )
+    ).scalar_one()
+    student_count = db.execute(
+        select(func.count(func.distinct(Student.id)))
+        .select_from(StudentSchool)
+        .join(Student, Student.id == StudentSchool.student_id)
+        .where(StudentSchool.school_id == school_id, Student.deleted_at.is_(None))
+    ).scalar_one()
+
+    return {
+        "total_billed_amount": Decimal(billed_total).quantize(Decimal("0.01")),
+        "total_charged_amount": Decimal(charged_total).quantize(Decimal("0.01")),
+        "total_paid_amount": Decimal(paid_total).quantize(Decimal("0.01")),
+        "total_pending_amount": Decimal(pending_total).quantize(Decimal("0.01")),
+        "student_count": int(student_count),
+    }

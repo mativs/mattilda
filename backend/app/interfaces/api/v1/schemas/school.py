@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -46,3 +47,11 @@ class SchoolResponse(BaseModel):
 class SchoolListResponse(BaseModel):
     items: list[SchoolResponse]
     pagination: PaginationMeta
+
+
+class SchoolFinancialSummaryResponse(BaseModel):
+    total_billed_amount: Decimal
+    total_charged_amount: Decimal
+    total_paid_amount: Decimal
+    total_pending_amount: Decimal
+    student_count: int

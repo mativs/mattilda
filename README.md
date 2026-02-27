@@ -271,6 +271,16 @@ Frontend admin association actions for user-school and student-school use the ac
     - disabled when there is no open invoice (`There is no open invoice`)
     - disabled when open invoice is overdue (`Invoice is due. Generate a new one`)
     - enabled only for non-overdue open invoice and submits `POST /api/v1/payments`
+
+## School dashboard metrics
+
+- `GET /api/v1/schools/{school_id}/financial-summary` (admin only; requires `X-School-Id` matching path id)
+- Metrics shown on home dashboard for active school:
+  - `total_billed_amount`: sum of currently open invoices (billed and still unpaid/open)
+  - `total_charged_amount`: sum of all positive, non-cancelled charges in the school
+  - `total_paid_amount`: sum of all payments received by the school
+  - `total_pending_amount`: net sum of unpaid charges (includes negative credits)
+  - `student_count`: distinct count of active students linked to the school
 - User create/edit modals include school-role assignment management:
   - table of assigned school + role rows
   - school selector + role selector + add button

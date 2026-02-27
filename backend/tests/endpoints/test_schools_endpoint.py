@@ -1,6 +1,10 @@
+from datetime import date, datetime, timezone
+
+from app.domain.charge_enums import ChargeStatus, ChargeType
+from app.domain.invoice_status import InvoiceStatus
 from app.domain.roles import UserRole
 from tests.helpers.auth import auth_header, school_header, token_for_user
-from tests.helpers.factories import add_membership, create_school
+from tests.helpers.factories import add_membership, create_charge, create_invoice, create_payment, create_school
 
 
 def test_get_schools_returns_200_for_authenticated_user(client, seeded_users):
@@ -115,6 +119,111 @@ def test_get_school_returns_200_for_valid_header_and_membership(client, seeded_u
     )
     assert response.status_code == 200
     assert response.json()["id"] == seeded_users["north_school"].id
+
+
+def test_get_school_financial_summary_returns_200_for_admin(client, seeded_users, db_session):
+    """
+    Validate school financial summary success for admin users.
+
+    1. Seed positive charges, one unpaid credit, and one payment in active school.
+    2. Call school financial summary endpoint once as admin.
+    3. Receive successful summary response.
+    4. Validate charged, paid, pending, and student count values.
+    """
+    invoice = create_invoice(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_one"].id,
+        period="2026-07",
+        issued_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        due_date=date(2026, 7, 10),
+        total_amount="100.00",
+        status=InvoiceStatus.open,
+    )
+    create_charge(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_one"].id,
+        description="Debt A",
+        amount="100.00",
+        due_date=date(2026, 7, 10),
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.unpaid,
+        invoice_id=invoice.id,
+    )
+    create_charge(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_two"].id,
+        description="Debt B",
+        amount="50.00",
+        due_date=date(2026, 7, 10),
+        charge_type=ChargeType.penalty,
+        status=ChargeStatus.paid,
+        invoice_id=invoice.id,
+    )
+    create_charge(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_one"].id,
+        description="Credit",
+        amount="-20.00",
+        due_date=date(2026, 7, 10),
+        charge_type=ChargeType.penalty,
+        status=ChargeStatus.unpaid,
+        invoice_id=invoice.id,
+    )
+    create_payment(
+        db_session,
+        school_id=seeded_users["north_school"].id,
+        student_id=seeded_users["child_one"].id,
+        invoice_id=invoice.id,
+        amount="40.00",
+        paid_at=datetime(2026, 7, 5, tzinfo=timezone.utc),
+    )
+    response = client.get(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/financial-summary",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_billed_amount"] == "100.00"
+    assert payload["total_charged_amount"] == "150.00"
+    assert payload["total_paid_amount"] == "40.00"
+    assert payload["total_pending_amount"] == "80.00"
+    assert payload["student_count"] == 2
+
+
+def test_get_school_financial_summary_returns_403_for_non_admin(client, seeded_users):
+    """
+    Validate school financial summary forbidden for non-admin users.
+
+    1. Build non-admin school-scoped header.
+    2. Call school financial summary endpoint once.
+    3. Receive forbidden response.
+    4. Validate endpoint is admin-only.
+    """
+    response = client.get(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/financial-summary",
+        headers=school_header(token_for_user(seeded_users["teacher"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 403
+
+
+def test_get_school_financial_summary_returns_400_for_mismatched_header(client, seeded_users):
+    """
+    Validate school financial summary header/path mismatch branch.
+
+    1. Build admin header with different school id.
+    2. Call financial summary endpoint once.
+    3. Receive bad request response.
+    4. Validate path/header mismatch is rejected.
+    """
+    response = client.get(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/financial-summary",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["south_school"].id),
+    )
+    assert response.status_code == 400
 
 
 def test_create_school_returns_201_for_school_admin(client, seeded_users):

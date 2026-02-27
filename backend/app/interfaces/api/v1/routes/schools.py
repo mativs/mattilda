@@ -8,6 +8,7 @@ from app.application.services.school_service import (
     add_user_school_role,
     create_school,
     delete_school,
+    get_school_financial_summary,
     get_school_by_id,
     remove_user_school_roles,
     serialize_school_response,
@@ -26,7 +27,13 @@ from app.interfaces.api.v1.dependencies.auth import (
 )
 from app.interfaces.api.v1.dependencies.pagination import get_pagination_params
 from app.interfaces.api.v1.schemas.pagination import PaginationParams
-from app.interfaces.api.v1.schemas.school import SchoolCreate, SchoolListResponse, SchoolResponse, SchoolUpdate
+from app.interfaces.api.v1.schemas.school import (
+    SchoolCreate,
+    SchoolFinancialSummaryResponse,
+    SchoolListResponse,
+    SchoolResponse,
+    SchoolUpdate,
+)
 from app.interfaces.api.v1.schemas.student import UserSchoolMembershipPayload
 
 router = APIRouter(prefix="/schools", tags=["schools"])
@@ -108,6 +115,21 @@ def delete_school_endpoint(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Path school id must match X-School-Id")
     school = cast(School, get_school_by_id(db=db, school_id=school_id))
     delete_school(db=db, school=school)
+
+
+@router.get(
+    "/{school_id}/financial-summary",
+    response_model=SchoolFinancialSummaryResponse,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+)
+def get_school_financial_summary_endpoint(
+    school_id: int,
+    selected_school_id: int = Depends(get_current_school_id),
+    db: Session = Depends(get_db),
+):
+    if selected_school_id != school_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Path school id must match X-School-Id")
+    return get_school_financial_summary(db=db, school_id=school_id)
 
 
 @router.post("/{school_id}/users", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_school_admin)])
