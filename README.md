@@ -19,6 +19,12 @@ Starter environment for a take-home exercise with:
 - Invoice Generator process
 - Conciliation proccess
 
+## Live links
+
+- FE demo app: https://frontend-production-600b.up.railway.app/
+- API docs (ReDoc): https://api-production-5dcd.up.railway.app/redoc
+- API: https://api-production-5dcd.up.railway.app/
+
 ## Project structure
 
 ```text
@@ -107,196 +113,6 @@ make quality
 
 4. Ensure Docker Desktop (or Docker daemon) is running before `make test`.
 
-## Tenant flow
-
-- User logs in via `POST /api/v1/auth/token`.
-- Frontend fetches `GET /api/v1/users/me` and receives school memberships with per-school roles.
-- Frontend selects one active school and sends `X-School-Id` in school-scoped requests.
-- Backend validates membership and school roles and binds tenant context for PostgreSQL RLS.
-- Soft deletes are applied to `users`, `schools`, and `students` (`deleted_at`).
-
-## School endpoints
-
-- `GET /api/v1/schools`
-- Returns only schools where the user has memberships.
-- `POST /api/v1/schools` (school `admin` in active school)
-- Creating a school auto-links the creator as `admin` in that new school.
-- `GET /api/v1/schools/{school_id}` (requires matching `X-School-Id`)
-- `PUT /api/v1/schools/{school_id}` (requires school role: `admin`)
-- `DELETE /api/v1/schools/{school_id}` (requires school role: `admin`, soft delete)
-- `POST /api/v1/schools/{school_id}/invoices/generate-all` (admin only, async enqueue for school-wide invoice generation; returns `202` with Celery `task_id`)
-- `POST /api/v1/schools/{school_id}/reconciliation/run` (admin only, async enqueue for school-wide reconciliation run; returns `202` with `task_id` and `run_id`)
-- `GET /api/v1/schools/{school_id}/reconciliation/runs` (admin only, paginated reconciliation runs list)
-- `GET /api/v1/schools/{school_id}/reconciliation/runs/{run_id}` (admin only, reconciliation run detail with findings)
-- `POST /api/v1/schools/{school_id}/users` (associate user+role to school, admin only)
-- `DELETE /api/v1/schools/{school_id}/users/{user_id}` (deassociate user from school, admin only)
-
-## Student endpoints
-
-- `GET /api/v1/students` (role-aware in active school: admin sees all, non-admin sees only own associated students)
-- `POST /api/v1/students` (create student, admin only; auto-associates student to active school)
-- `GET /api/v1/students/{student_id}` (visible when admin in active school, or when student is associated with current user; hidden/non-visible records return `404`)
-- `PUT /api/v1/students/{student_id}` (admin only; supports partial association sync via `associations.add/remove`)
-- `DELETE /api/v1/students/{student_id}` (soft delete, admin only)
-- `POST /api/v1/students/{student_id}/users` and `DELETE /.../users/{user_id}` (associate/deassociate user-student, admin only)
-- `POST /api/v1/students/{student_id}/schools` and `DELETE /.../schools/{school_id}` (associate/deassociate student-school, admin only)
-
-Frontend admin association actions for user-school and student-school use the active school session (`X-School-Id`) as context.
-
-## Fee definition endpoints
-
-- `GET /api/v1/fees` (admin only, active school-scoped, paginated envelope)
-- `POST /api/v1/fees` (admin only, creates fee definition for active school)
-- `GET /api/v1/fees/{fee_id}` (admin only, `404` if not visible in active school)
-- `PUT /api/v1/fees/{fee_id}` (admin only, updates active-school fee definition)
-- `DELETE /api/v1/fees/{fee_id}` (admin only, soft delete)
-
-`POST /api/v1/fees` payload example:
-
-```json
-{
-  "name": "Cuota mensual",
-  "amount": "150.00",
-  "recurrence": "monthly",
-  "is_active": true
-}
-```
-
-## Charge endpoints
-
-- `GET /api/v1/charges` (admin only, active school-scoped, paginated envelope)
-- `POST /api/v1/charges` (admin only, creates charge for active school and valid student)
-- `GET /api/v1/charges/{charge_id}` (admin only, `404` if not visible in active school)
-- `PUT /api/v1/charges/{charge_id}` (admin only, updates active-school charge)
-- `DELETE /api/v1/charges/{charge_id}` (admin only, soft delete + status `cancelled`)
-- `GET /api/v1/students/{student_id}/charges/unpaid` (admin only; returns unpaid items and `total_unpaid_amount`)
-- `GET /api/v1/students/{student_id}/charges/unpaid` (visibility-aware; paginated/searchable unpaid items and `total_unpaid_amount`)
-- `GET /api/v1/students/{student_id}/financial-summary` (visibility-aware; school-scoped all-time totals for unpaid/charged/paid and account status)
-- Charge status values: `paid`, `unpaid`, `cancelled`
-- Charge type values: `fee`, `interest`, `penalty`
-- `debt_created_at` is required for charge create/update flows
-
-## Invoice endpoints
-
-- `GET /api/v1/students/{student_id}/invoices` (paginated/searchable summaries only; each row excludes invoice items)
-- `GET /api/v1/invoices/{invoice_id}` (invoice detail with nested `items`)
-- `GET /api/v1/invoices/{invoice_id}/items` (invoice items list; compatibility read endpoint)
-- `POST /api/v1/students/{student_id}/invoices/generate` (admin only; closes existing open invoice, computes interest deltas, and creates a new open invoice from unpaid charges)
-- Invoice generation behavior (`POST /api/v1/students/{student_id}/invoices/generate`):
-  - closes any existing open invoice for that student
-  - computes overdue interest deltas only for unpaid `fee` charges
-  - does not compound interest over interest
-  - creates a new open invoice from current unpaid charges and snapshots them into invoice items
-- Visibility rules:
-  - school `admin`: can read all invoices from active school
-  - non-admin: can read invoices only for students associated to current user in active school
-  - non-visible existing records return `404`
-
-## Payment endpoints
-
-- `POST /api/v1/payments` (admin only, active school-scoped)
-- `GET /api/v1/students/{student_id}/payments` (paginated/searchable, visibility-aware)
-- `GET /api/v1/payments/{payment_id}` (visibility-aware)
-- `POST /api/v1/payments` rules:
-  - invoice is required
-  - invoice must be open
-  - overdue invoices are rejected (`400`)
-  - payment allocation uses deterministic ordering and pays only fully-coverable charges
-  - if allocation reaches a partial cutoff, cutoff charge remains unpaid (no split residual charge)
-  - leftover amount that cannot be allocated to a full charge is recorded as a negative carry credit charge
-  - accepted payment closes the invoice
-- Visibility rules:
-  - school `admin`: can read all payments from active school
-  - non-admin: can read payments only for students associated to current user in active school
-  - non-visible existing records return `404`
-
-`POST /api/v1/charges` payload example:
-
-```json
-{
-  "student_id": 1,
-  "fee_definition_id": null,
-  "description": "Cuota mensual marzo",
-  "amount": "150.00",
-  "period": "2026-03",
-  "debt_created_at": "2026-03-01T09:00:00Z",
-  "due_date": "2026-03-10",
-  "charge_type": "fee",
-  "status": "unpaid"
-}
-```
-
-### Partial association sync payloads
-
-`PUT /api/v1/users/{user_id}` can include:
-
-```json
-{
-  "associations": {
-    "add": { "school_roles": [{ "school_id": 1, "role": "teacher" }] },
-    "remove": { "school_roles": [{ "school_id": 2, "role": "student" }] }
-  }
-}
-```
-
-`PUT /api/v1/students/{student_id}` can include:
-
-```json
-{
-  "associations": {
-    "add": { "user_ids": [10], "school_ids": [3] },
-    "remove": { "user_ids": [11], "school_ids": [2] }
-  }
-}
-```
-
-## Frontend navigation
-
-- Default route after login: `/dashboard`.
-- Sidebar sections:
-  - `Dashboard`
-  - `Configuration` (admin only): `Users`, `Students`, `Schools`, `Fees`, `Charges`, `Reconciliation`
-  - `Students` (one item per student associated with current user in active school)
-- Top-right area includes:
-  - school selector (switches active `X-School-Id` context)
-  - avatar shortcut to `/profile`
-- Configuration lists (`users`, `students`, `schools`, `fees`, `charges`) support:
-  - server-side search and pagination (`offset`, `limit`, `search`)
-  - create/edit modals
-  - row delete actions with confirmation
-- Student dashboard view supports:
-  - financial summary cards and summary table (unpaid, charged, paid, debt, credit, account status)
-  - unpaid charges table with server-side search/pagination
-  - invoices table with server-side search/pagination, payment action modal, and admin-only manual generation button
-  - payments table with server-side search/pagination
-  - payment button behavior:
-    - disabled when there is no open invoice (`There is no open invoice`)
-    - disabled when open invoice is overdue (`Invoice is due. Generate a new one`)
-    - enabled only for non-overdue open invoice and submits `POST /api/v1/payments`
-
-## School dashboard metrics
-
-- `GET /api/v1/schools/{school_id}/financial-summary` (admin only; requires `X-School-Id` matching path id)
-- Metrics shown on home dashboard for active school:
-  - `total_billed_amount`: sum of currently open invoices (billed and still unpaid/open)
-  - `total_charged_amount`: sum of all positive, non-cancelled charges in the school
-  - `total_paid_amount`: sum of all payments received by the school
-  - `total_pending_amount`: net sum of unpaid charges (includes negative credits)
-  - `student_count`: distinct count of active students linked to the school
-  - `relevant_invoices`: actionable open invoices with pending debt, grouped by:
-    - `overdue_90_plus`: due date is 90+ days in the past
-    - `top_pending_open`: highest pending debt among open invoices
-    - `due_soon_7_days`: due date between today and the next 7 days
-- Admin-only dashboard action:
-  - `Generate Invoices (All Students)` queues `POST /api/v1/schools/{school_id}/invoices/generate-all`
-  - endpoint responds immediately with `202` and task id while worker processes generation in background
-  - `Run Reconciliation` queues `POST /api/v1/schools/{school_id}/reconciliation/run`
-  - endpoint responds immediately with `202`, then results are visible in `Configuration > Reconciliation`
-- User create/edit modals include school-role assignment management:
-  - table of assigned school + role rows
-  - school selector + role selector + add button
-  - remove action per row
-
 ## Makefile shortcuts
 
 Use `make help` to see all available commands.
@@ -310,42 +126,45 @@ make test
 make down
 ```
 
-## Login test users
+## Reviewer quick guide
 
-Seed command creates:
+If you only have a few minutes, follow this path:
 
-- `admin@example.com` / `admin123`
-- `teacher@example.com` / `teacher123`
-- `student@example.com` / `student123`
+1. Start everything:
+   ```bash
+   make up
+   make migrate
+   make seed
+   ```
+2. Open:
+   - Frontend: http://localhost:13000
+   - Swagger: http://localhost:18000/docs
+3. Run tests:
+   ```bash
+   make test
+   ```
+4. Review key implementation decisions:
+   - `CONSIDERATIONS.md`
+   - `TEST.md`
 
-And also creates:
+### Suggested manual checks
 
-- `reconciliation-lab` school with targeted reconciliation anomalies for manual verification
-- Per-school memberships and roles for seeded users in seeded lab schools
-- Sample students linked to users and schools in seeded lab schools
-- Sample fees, charges, invoices/invoice items, and payments used by lab scenarios
-- `tc-lab` school with `TC-01`..`TC-15` billing fixtures for manual invoice/payment process validation
+- **Billing lifecycle (`tc-lab`)**
+  - Log in as `admin@example.com` / `admin123`.
+  - Switch to school `tc-lab`.
+  - Open `Configuration > Students` and search `TC-XX`.
+  - Validate invoice generation and payment behavior across seeded cases.
 
-`tc-lab` quick manual flow:
+- **Reconciliation workflow (`reconciliation-lab`)**
+  - Switch to school `reconciliation-lab`.
+  - Run reconciliation from dashboard or `Configuration > Reconciliation`.
+  - Validate findings are generated and visible in run details.
 
-- Log in as `admin@example.com` / `admin123`
-- Switch school selector to `tc-lab`
-- TC fixture dates are seeded with a rolling month anchor based on the current date, so scenarios stay valid over time
-- Open `Configuration > Students`, search by `TC-XX`, then open the student dashboard by clicking the student ID
-- For generation scenarios (`TC-07`..`TC-10`, `TC-14`, `TC-15`), use the `Generate Invoice` button on billing view
-- For payment scenarios (`TC-01`..`TC-06`, `TC-11`..`TC-13`), create payments against the open invoice and validate charge/invoice transitions
+- **Visibility rules (`visibility-lab`)**
+  - Use `teacher@example.com` / `teacher123` and `student@example.com` / `student123`.
+  - Confirm teacher sees assigned students and student sees only own record.
 
-`reconciliation-lab` quick manual flow:
+## Related docs
 
-- Log in as `admin@example.com` / `admin123`
-- Switch school selector to `reconciliation-lab`
-- Click `Run Reconciliation` from the dashboard (or open `Configuration > Reconciliation` and click `Run All Checks`)
-- Open `Configuration > Reconciliation` and inspect the latest run details/findings
-- Expected seeded finding types include:
-  - `invoice_total_mismatch`
-  - `interest_invalid_origin`
-  - `invoice_open_with_sufficient_payments`
-  - `duplicate_payment_window`
-  - `paid_charge_without_payment_evidence`
-
-Use the frontend login form at `http://localhost:13000` to verify authenticated session and the dummy home page.
+- Design rationale and tradeoffs: `CONSIDERATIONS.md`
+- Manual test scenarios and expected outcomes: `TEST.md`
