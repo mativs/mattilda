@@ -26,7 +26,17 @@ from app.interfaces.api.v1.schemas.user import UserCreate, UserListResponse, Use
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.get("", response_model=UserListResponse, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+@router.get(
+    "",
+    response_model=UserListResponse,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="List users for active school",
+    description=(
+        "Return users associated with the school selected via `X-School-Id` (admin only). "
+        "Use `Authorization: Bearer <token>`."
+    ),
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
+)
 def get_users(
     school_id: int = Depends(get_current_school_id),
     pagination: PaginationParams = Depends(get_pagination_params),
@@ -56,13 +66,22 @@ def get_users(
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Create user",
+    description="Create a user record (admin only).",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
 )
 def create_user_endpoint(payload: UserCreate, db: Session = Depends(get_db)):
     user = create_user(db=db, payload=payload)
     return serialize_user_response(user)
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    summary="Get current authenticated user",
+    description="Return the profile and associations for the bearer token owner.",
+    responses={401: {"description": "Unauthorized"}},
+)
 def get_me(current_user: User = Depends(require_authenticated)):
     return serialize_user_response(current_user)
 
@@ -71,6 +90,13 @@ def get_me(current_user: User = Depends(require_authenticated)):
     "/{user_id}",
     response_model=UserResponse,
     dependencies=[Depends(require_self_or_school_roles("user_id", [UserRole.admin]))],
+    summary="Get user by id",
+    description="Return one user when caller is same user or school admin.",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Forbidden"},
+        404: {"description": "User not found"},
+    },
 )
 def get_user(user_id: int, db: Session = Depends(get_db)):
     user = get_user_by_id(db=db, user_id=user_id)
@@ -79,7 +105,18 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
     return serialize_user_response(user)
 
 
-@router.put("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+@router.put(
+    "/{user_id}",
+    response_model=UserResponse,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Update user",
+    description="Update user attributes and association deltas (admin only).",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        404: {"description": "User not found"},
+    },
+)
 def update_user_endpoint(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)):
     user = get_user_by_id(db=db, user_id=user_id)
     if user is None:
@@ -89,7 +126,16 @@ def update_user_endpoint(user_id: int, payload: UserUpdate, db: Session = Depend
 
 
 @router.delete(
-    "/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_roles([UserRole.admin]))]
+    "/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Delete user (soft delete)",
+    description="Soft-delete a user (admin only).",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        404: {"description": "User not found"},
+    },
 )
 def delete_user_endpoint(user_id: int, db: Session = Depends(get_db)):
     user = get_user_by_id(db=db, user_id=user_id)

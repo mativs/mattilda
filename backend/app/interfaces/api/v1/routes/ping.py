@@ -8,7 +8,11 @@ from app.infrastructure.db.session import get_db
 router = APIRouter(tags=["health"])
 
 
-@router.get("/ping")
+@router.get(
+    "/ping",
+    summary="Health check",
+    description="Simple database and Redis connectivity check used for smoke testing and deployment validation.",
+)
 def ping(db: Session = Depends(get_db)):
     redis_client = get_redis_client()
     return get_dummy_status(db=db, redis_client=redis_client)

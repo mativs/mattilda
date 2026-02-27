@@ -54,7 +54,13 @@ router = APIRouter(prefix="/schools", tags=["schools"])
 logger = get_logger(__name__)
 
 
-@router.get("", response_model=SchoolListResponse)
+@router.get(
+    "",
+    response_model=SchoolListResponse,
+    summary="List user schools",
+    description="List schools where current user has membership.",
+    responses={401: {"description": "Unauthorized"}},
+)
 def get_schools(
     current_user: User = Depends(require_authenticated),
     pagination: PaginationParams = Depends(get_pagination_params),
@@ -78,7 +84,14 @@ def get_schools(
     return {"items": [serialize_school_response(school) for school in schools], "pagination": meta}
 
 
-@router.post("", response_model=SchoolResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=SchoolResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create school",
+    description="Create a school and auto-assign creator as school admin.",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
+)
 def create_school_endpoint(
     payload: SchoolCreate,
     current_user: User = Depends(require_school_admin),
@@ -88,7 +101,13 @@ def create_school_endpoint(
     return serialize_school_response(school)
 
 
-@router.get("/{school_id}", response_model=SchoolResponse)
+@router.get(
+    "/{school_id}",
+    response_model=SchoolResponse,
+    summary="Get school by id",
+    description="Return school details. Path `school_id` must match `X-School-Id`.",
+    responses={401: {"description": "Unauthorized"}, 400: {"description": "Path/header school mismatch"}},
+)
 def get_school(
     school_id: int,
     selected_school_id: int = Depends(get_current_school_id),
@@ -101,7 +120,16 @@ def get_school(
 
 
 @router.put(
-    "/{school_id}", response_model=SchoolResponse, dependencies=[Depends(require_school_roles([UserRole.admin]))]
+    "/{school_id}",
+    response_model=SchoolResponse,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Update school",
+    description="Admin-only school update for active school; path id must match `X-School-Id`.",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        400: {"description": "Path/header school mismatch"},
+    },
 )
 def update_school_endpoint(
     school_id: int,
@@ -120,6 +148,13 @@ def update_school_endpoint(
     "/{school_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Delete school (soft delete)",
+    description="Admin-only school soft delete; path id must match `X-School-Id`.",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        400: {"description": "Path/header school mismatch"},
+    },
 )
 def delete_school_endpoint(
     school_id: int,
@@ -136,6 +171,13 @@ def delete_school_endpoint(
     "/{school_id}/financial-summary",
     response_model=SchoolFinancialSummaryResponse,
     dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Get school financial summary",
+    description="Admin-only financial KPIs and relevant invoices for active school.",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        400: {"description": "Path/header school mismatch"},
+    },
 )
 def get_school_financial_summary_endpoint(
     school_id: int,
@@ -152,6 +194,17 @@ def get_school_financial_summary_endpoint(
     response_model=SchoolInvoiceGenerationTaskResponse,
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Enqueue school-wide invoice generation",
+    description=(
+        "Admin-only async task enqueue for generating invoices for all school students. "
+        "Returns queue metadata immediately."
+    ),
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        400: {"description": "Path/header school mismatch"},
+        503: {"description": "Task enqueue failed"},
+    },
 )
 def enqueue_school_invoice_generation(
     school_id: int,
@@ -178,6 +231,14 @@ def enqueue_school_invoice_generation(
     response_model=ReconciliationRunTaskResponse,
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Enqueue school reconciliation run",
+    description="Admin-only async enqueue for reconciliation checks in active school.",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        400: {"description": "Path/header school mismatch"},
+        503: {"description": "Task enqueue failed"},
+    },
 )
 def enqueue_school_reconciliation(
     school_id: int,
@@ -211,6 +272,13 @@ def enqueue_school_reconciliation(
     "/{school_id}/reconciliation/runs",
     response_model=ReconciliationRunListResponse,
     dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="List reconciliation runs",
+    description="Admin-only paginated reconciliation run history for active school.",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        400: {"description": "Path/header school mismatch"},
+    },
 )
 def get_school_reconciliation_runs(
     school_id: int,
@@ -235,6 +303,14 @@ def get_school_reconciliation_runs(
     "/{school_id}/reconciliation/runs/{run_id}",
     response_model=ReconciliationRunDetailResponse,
     dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Get reconciliation run detail",
+    description="Admin-only run detail with ordered findings for active school.",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        400: {"description": "Path/header school mismatch"},
+        404: {"description": "Run not found"},
+    },
 )
 def get_school_reconciliation_run_detail(
     school_id: int,
@@ -252,14 +328,26 @@ def get_school_reconciliation_run_detail(
     }
 
 
-@router.post("/{school_id}/users", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_school_admin)])
+@router.post(
+    "/{school_id}/users",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_school_admin)],
+    summary="Associate user with school",
+    description="Admin-only association of a user and role into a school.",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
+)
 def associate_user_with_school(school_id: int, payload: UserSchoolMembershipPayload, db: Session = Depends(get_db)):
     add_user_school_role(db=db, school_id=school_id, user_id=payload.user_id, role=payload.role.value)
     return {"message": "User associated to school"}
 
 
 @router.delete(
-    "/{school_id}/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_admin)]
+    "/{school_id}/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_school_admin)],
+    summary="Deassociate user from school",
+    description="Admin-only removal of all user roles from a school.",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
 )
 def deassociate_user_from_school(school_id: int, user_id: int, db: Session = Depends(get_db)):
     remove_user_school_roles(db=db, school_id=school_id, user_id=user_id)

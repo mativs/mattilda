@@ -46,7 +46,15 @@ from app.interfaces.api.v1.schemas.student import (
 router = APIRouter(prefix="/students", tags=["students"])
 
 
-@router.get("", response_model=StudentListResponse)
+@router.get(
+    "",
+    response_model=StudentListResponse,
+    summary="List students",
+    description=(
+        "Return students in active school (`X-School-Id`): admins see all, non-admin users see only associated students."
+    ),
+    responses={401: {"description": "Unauthorized"}},
+)
 def get_students(
     school_id: int = Depends(get_current_school_id),
     current_user: User = Depends(require_authenticated),
@@ -89,6 +97,9 @@ def get_students(
     response_model=StudentResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_school_admin)],
+    summary="Create student",
+    description="Admin-only creation. Student is automatically associated with active school (`X-School-Id`).",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
 )
 def create_student_endpoint(
     payload: StudentCreate, school_id: int = Depends(get_current_school_id), db: Session = Depends(get_db)
@@ -97,7 +108,13 @@ def create_student_endpoint(
     return serialize_student_response(student)
 
 
-@router.get("/{student_id}", response_model=StudentResponse)
+@router.get(
+    "/{student_id}",
+    response_model=StudentResponse,
+    summary="Get student by id",
+    description="Return student when visible in active school; hidden records return 404.",
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "Student not found"}},
+)
 def get_student(
     student_id: int,
     school_id: int = Depends(get_current_school_id),
@@ -120,6 +137,11 @@ def get_student(
 @router.get(
     "/{student_id}/charges/unpaid",
     response_model=StudentUnpaidChargesResponse,
+    summary="List student unpaid charges",
+    description=(
+        "Return unpaid charges for a visible student in active school with pagination/search and total unpaid amount."
+    ),
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "Student not found"}},
 )
 def get_student_unpaid_charges(
     student_id: int,
@@ -162,7 +184,13 @@ def get_student_unpaid_charges(
     return {"items": [serialize_charge_response(charge) for charge in charges], "pagination": meta, "total_unpaid_amount": total}
 
 
-@router.get("/{student_id}/financial-summary", response_model=StudentFinancialSummaryResponse)
+@router.get(
+    "/{student_id}/financial-summary",
+    response_model=StudentFinancialSummaryResponse,
+    summary="Get student financial summary",
+    description="Return debt/credit financial summary for a visible student in active school.",
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "Student not found"}},
+)
 def get_student_financial_summary_endpoint(
     student_id: int,
     school_id: int = Depends(get_current_school_id),
@@ -182,7 +210,18 @@ def get_student_financial_summary_endpoint(
     return get_student_financial_summary(db=db, school_id=school_id, student_id=student.id)
 
 
-@router.put("/{student_id}", response_model=StudentResponse, dependencies=[Depends(require_school_admin)])
+@router.put(
+    "/{student_id}",
+    response_model=StudentResponse,
+    dependencies=[Depends(require_school_admin)],
+    summary="Update student",
+    description="Admin-only update of student fields and association deltas.",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        404: {"description": "Student not found"},
+    },
+)
 def update_student_endpoint(student_id: int, payload: StudentUpdate, db: Session = Depends(get_db)):
     student = get_student_by_id(db=db, student_id=student_id)
     if student is None:
@@ -191,7 +230,18 @@ def update_student_endpoint(student_id: int, payload: StudentUpdate, db: Session
     return serialize_student_response(updated)
 
 
-@router.delete("/{student_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_admin)])
+@router.delete(
+    "/{student_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_school_admin)],
+    summary="Delete student (soft delete)",
+    description="Admin-only soft deletion of a student.",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        404: {"description": "Student not found"},
+    },
+)
 def delete_student_endpoint(student_id: int, db: Session = Depends(get_db)):
     student = get_student_by_id(db=db, student_id=student_id)
     if student is None:
@@ -199,7 +249,14 @@ def delete_student_endpoint(student_id: int, db: Session = Depends(get_db)):
     delete_student(db=db, student=student)
 
 
-@router.post("/{student_id}/users", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_school_admin)])
+@router.post(
+    "/{student_id}/users",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_school_admin)],
+    summary="Associate user to student",
+    description="Admin-only association between user and student in active school context.",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
+)
 def associate_user(student_id: int, payload: StudentAssociateUserPayload, db: Session = Depends(get_db)):
     associate_user_student(db=db, user_id=payload.user_id, student_id=student_id)
     return {"message": "User associated with student"}
@@ -209,12 +266,22 @@ def associate_user(student_id: int, payload: StudentAssociateUserPayload, db: Se
     "/{student_id}/users/{user_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_school_admin)],
+    summary="Deassociate user from student",
+    description="Admin-only removal of user-student association.",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
 )
 def deassociate_user(student_id: int, user_id: int, db: Session = Depends(get_db)):
     deassociate_user_student(db=db, user_id=user_id, student_id=student_id)
 
 
-@router.post("/{student_id}/schools", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_school_admin)])
+@router.post(
+    "/{student_id}/schools",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_school_admin)],
+    summary="Associate student to school",
+    description="Admin-only association between student and school.",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
+)
 def associate_school(student_id: int, payload: StudentAssociateSchoolPayload, db: Session = Depends(get_db)):
     associate_student_school(db=db, student_id=student_id, school_id=payload.school_id)
     return {"message": "Student associated with school"}
@@ -224,6 +291,9 @@ def associate_school(student_id: int, payload: StudentAssociateSchoolPayload, db
     "/{student_id}/schools/{school_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_school_admin)],
+    summary="Deassociate student from school",
+    description="Admin-only removal of student-school association.",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
 )
 def deassociate_school(student_id: int, school_id: int, db: Session = Depends(get_db)):
     deassociate_student_school(db=db, student_id=student_id, school_id=school_id)

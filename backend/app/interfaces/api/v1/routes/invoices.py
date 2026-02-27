@@ -33,7 +33,16 @@ from app.interfaces.api.v1.schemas.pagination import PaginationParams
 router = APIRouter(tags=["invoices"])
 
 
-@router.get("/students/{student_id}/invoices", response_model=InvoiceListResponse)
+@router.get(
+    "/students/{student_id}/invoices",
+    response_model=InvoiceListResponse,
+    summary="List student invoices",
+    description=(
+        "Return invoice summaries visible to the current user for a student in the active school. "
+        "Requires `Authorization: Bearer <token>` and `X-School-Id`."
+    ),
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "Student not found"}},
+)
 def get_student_invoices(
     student_id: int,
     school_id: int = Depends(get_current_school_id),
@@ -75,7 +84,13 @@ def get_student_invoices(
     return {"items": [serialize_invoice_summary(item) for item in items], "pagination": meta}
 
 
-@router.get("/invoices/{invoice_id}", response_model=InvoiceDetailResponse)
+@router.get(
+    "/invoices/{invoice_id}",
+    response_model=InvoiceDetailResponse,
+    summary="Get invoice detail",
+    description="Return one invoice with item snapshot details when visible to caller in active school.",
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "Invoice not found"}},
+)
 def get_invoice_detail(
     invoice_id: int,
     school_id: int = Depends(get_current_school_id),
@@ -95,7 +110,13 @@ def get_invoice_detail(
     return serialize_invoice_detail(invoice)
 
 
-@router.get("/invoices/{invoice_id}/items", response_model=list[InvoiceItemResponse])
+@router.get(
+    "/invoices/{invoice_id}/items",
+    response_model=list[InvoiceItemResponse],
+    summary="List invoice items",
+    description="Return immutable invoice line items for a visible invoice in active school.",
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "Invoice not found"}},
+)
 def get_invoice_items(
     invoice_id: int,
     school_id: int = Depends(get_current_school_id),
@@ -120,6 +141,16 @@ def get_invoice_items(
     response_model=InvoiceSummaryResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Generate invoice for student",
+    description=(
+        "Admin-only operation for active school (`X-School-Id`): closes existing open invoice, "
+        "applies overdue interest delta rules, and creates a new invoice snapshot from unpaid charges."
+    ),
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        400: {"description": "Validation error while generating invoice"},
+    },
 )
 def generate_student_invoice(
     student_id: int,

@@ -11,6 +11,27 @@ from app.interfaces.api.v1.router import api_router
 
 logger = get_logger(__name__)
 
+OPENAPI_DESCRIPTION = """
+School finance API for managing schools, students, charges, invoices, payments, and reconciliation.
+
+How to call this API:
+- Authenticate at `POST /api/v1/auth/token`.
+- Use `Authorization: Bearer <access_token>` in protected endpoints.
+- For school-scoped endpoints, send `X-School-Id` with a school where the user has membership.
+"""
+
+OPENAPI_TAGS = [
+    {"name": "health", "description": "Service health and connectivity checks."},
+    {"name": "auth", "description": "Authentication and token issuance."},
+    {"name": "users", "description": "User profile, memberships, and user management in school context."},
+    {"name": "schools", "description": "School CRUD, financial summary, school-wide tasks, and reconciliation."},
+    {"name": "students", "description": "Student CRUD, visibility-aware access, and student financial views."},
+    {"name": "fees", "description": "Fee definition configuration for a school (admin-managed)."},
+    {"name": "charges", "description": "Atomic debt records associated with students and invoices."},
+    {"name": "invoices", "description": "Invoice reads and controlled invoice generation flows."},
+    {"name": "payments", "description": "Payment creation and visibility-aware payment reads."},
+]
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -20,7 +41,13 @@ async def lifespan(_: FastAPI):
     logger.info("app_shutdown", app_name=settings.app_name)
 
 
-app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
+app = FastAPI(
+    title=settings.app_name,
+    version=settings.app_version,
+    description=OPENAPI_DESCRIPTION,
+    openapi_tags=OPENAPI_TAGS,
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,

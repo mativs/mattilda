@@ -21,7 +21,14 @@ from app.interfaces.api.v1.schemas.pagination import PaginationParams
 router = APIRouter(prefix="/fees", tags=["fees"])
 
 
-@router.get("", response_model=FeeListResponse, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+@router.get(
+    "",
+    response_model=FeeListResponse,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="List fee definitions",
+    description="List fee definitions for the active school selected by `X-School-Id` (admin only).",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
+)
 def get_fees(
     school_id: int = Depends(get_current_school_id),
     pagination: PaginationParams = Depends(get_pagination_params),
@@ -48,6 +55,9 @@ def get_fees(
     response_model=FeeResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Create fee definition",
+    description="Create a fee definition for the active school (admin only).",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
 )
 def create_fee_endpoint(
     payload: FeeCreate,
@@ -58,7 +68,18 @@ def create_fee_endpoint(
     return serialize_fee_response(fee)
 
 
-@router.get("/{fee_id}", response_model=FeeResponse, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+@router.get(
+    "/{fee_id}",
+    response_model=FeeResponse,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Get fee definition by id",
+    description="Fetch one fee definition from the active school (admin only).",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        404: {"description": "Fee definition not found"},
+    },
+)
 def get_fee_endpoint(fee_id: int, school_id: int = Depends(get_current_school_id), db: Session = Depends(get_db)):
     fee = get_fee_definition_by_id(db=db, fee_id=fee_id, school_id=school_id)
     if fee is None:
@@ -66,7 +87,18 @@ def get_fee_endpoint(fee_id: int, school_id: int = Depends(get_current_school_id
     return serialize_fee_response(fee)
 
 
-@router.put("/{fee_id}", response_model=FeeResponse, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+@router.put(
+    "/{fee_id}",
+    response_model=FeeResponse,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Update fee definition",
+    description="Update mutable fields of a fee definition in the active school (admin only).",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        404: {"description": "Fee definition not found"},
+    },
+)
 def update_fee_endpoint(
     fee_id: int,
     payload: FeeUpdate,
@@ -81,7 +113,16 @@ def update_fee_endpoint(
 
 
 @router.delete(
-    "/{fee_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_school_roles([UserRole.admin]))]
+    "/{fee_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Delete fee definition (soft delete)",
+    description="Soft-delete a fee definition in the active school (admin only).",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        404: {"description": "Fee definition not found"},
+    },
 )
 def delete_fee_endpoint(fee_id: int, school_id: int = Depends(get_current_school_id), db: Session = Depends(get_db)):
     fee = get_fee_definition_by_id(db=db, fee_id=fee_id, school_id=school_id)

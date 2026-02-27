@@ -21,7 +21,14 @@ from app.interfaces.api.v1.schemas.pagination import PaginationParams
 router = APIRouter(prefix="/charges", tags=["charges"])
 
 
-@router.get("", response_model=ChargeListResponse, dependencies=[Depends(require_school_roles([UserRole.admin]))])
+@router.get(
+    "",
+    response_model=ChargeListResponse,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="List charges",
+    description="List charges for the active school (`X-School-Id`) with pagination and search (admin only).",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
+)
 def get_charges(
     school_id: int = Depends(get_current_school_id),
     pagination: PaginationParams = Depends(get_pagination_params),
@@ -49,6 +56,9 @@ def get_charges(
     response_model=ChargeResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Create charge",
+    description="Create a charge for a student in the active school (admin only).",
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Insufficient school role"}},
 )
 def create_charge_endpoint(
     payload: ChargeCreate,
@@ -60,7 +70,16 @@ def create_charge_endpoint(
 
 
 @router.get(
-    "/{charge_id}", response_model=ChargeResponse, dependencies=[Depends(require_school_roles([UserRole.admin]))]
+    "/{charge_id}",
+    response_model=ChargeResponse,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Get charge by id",
+    description="Fetch one charge from the active school (admin only).",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        404: {"description": "Charge not found"},
+    },
 )
 def get_charge_endpoint(charge_id: int, school_id: int = Depends(get_current_school_id), db: Session = Depends(get_db)):
     charge = get_charge_by_id(db=db, charge_id=charge_id, school_id=school_id)
@@ -70,7 +89,16 @@ def get_charge_endpoint(charge_id: int, school_id: int = Depends(get_current_sch
 
 
 @router.put(
-    "/{charge_id}", response_model=ChargeResponse, dependencies=[Depends(require_school_roles([UserRole.admin]))]
+    "/{charge_id}",
+    response_model=ChargeResponse,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Update charge",
+    description="Update mutable fields of a charge in the active school (admin only).",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        404: {"description": "Charge not found"},
+    },
 )
 def update_charge_endpoint(
     charge_id: int,
@@ -89,6 +117,13 @@ def update_charge_endpoint(
     "/{charge_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_school_roles([UserRole.admin]))],
+    summary="Delete charge (soft delete)",
+    description="Soft-delete a charge and mark it cancelled in the active school (admin only).",
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school role"},
+        404: {"description": "Charge not found"},
+    },
 )
 def delete_charge_endpoint(
     charge_id: int, school_id: int = Depends(get_current_school_id), db: Session = Depends(get_db)

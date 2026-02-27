@@ -30,6 +30,18 @@ router = APIRouter(tags=["payments"])
     "/payments",
     response_model=PaymentResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Create payment",
+    description=(
+        "Create a payment for an invoice in the active school (`X-School-Id`). "
+        "Allowed for school admins and student users paying their own visible student. "
+        "Payment processing uses a short Redis lock to prevent duplicate submits."
+    ),
+    responses={
+        401: {"description": "Unauthorized"},
+        403: {"description": "Insufficient school permissions"},
+        404: {"description": "Student not found"},
+        400: {"description": "Payment validation error"},
+    },
 )
 def create_payment_endpoint(
     payload: PaymentCreate,
@@ -57,7 +69,15 @@ def create_payment_endpoint(
     return serialize_payment_response(payment)
 
 
-@router.get("/students/{student_id}/payments", response_model=PaymentListResponse)
+@router.get(
+    "/students/{student_id}/payments",
+    response_model=PaymentListResponse,
+    summary="List student payments",
+    description=(
+        "List payments for a student visible to caller in active school (`X-School-Id`) with pagination/search."
+    ),
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "Student not found"}},
+)
 def get_student_payments(
     student_id: int,
     school_id: int = Depends(get_current_school_id),
@@ -99,7 +119,13 @@ def get_student_payments(
     return {"items": [serialize_payment_response(item) for item in items], "pagination": meta}
 
 
-@router.get("/payments/{payment_id}", response_model=PaymentResponse)
+@router.get(
+    "/payments/{payment_id}",
+    response_model=PaymentResponse,
+    summary="Get payment detail",
+    description="Return one payment when visible to caller in active school.",
+    responses={401: {"description": "Unauthorized"}, 404: {"description": "Payment not found"}},
+)
 def get_payment_detail(
     payment_id: int,
     school_id: int = Depends(get_current_school_id),
