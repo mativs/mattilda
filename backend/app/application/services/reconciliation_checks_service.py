@@ -254,6 +254,44 @@ def _check_duplicate_payments(db: Session, *, school_id: int, window_seconds: in
     ]
 
 
+def _check_paid_positive_charge_without_payment_evidence(db: Session, *, school_id: int) -> list[dict]:
+    payment_exists_for_invoice = (
+        select(Payment.id)
+        .where(
+            Payment.school_id == school_id,
+            Payment.deleted_at.is_(None),
+            Payment.invoice_id == Charge.invoice_id,
+        )
+        .exists()
+    )
+    rows = db.execute(
+        select(Charge.id, Charge.student_id, Charge.invoice_id, Charge.amount)
+        .where(
+            Charge.school_id == school_id,
+            Charge.deleted_at.is_(None),
+            Charge.status == ChargeStatus.paid,
+            Charge.amount > Decimal("0.00"),
+            or_(Charge.invoice_id.is_(None), ~payment_exists_for_invoice),
+        )
+        .order_by(Charge.id)
+    ).all()
+    return [
+        {
+            "check_code": "paid_charge_without_payment_evidence",
+            "severity": "high",
+            "entity_type": "charge",
+            "entity_id": row.id,
+            "message": "Positive paid charge has no corresponding payment evidence",
+            "details_json": {
+                "student_id": row.student_id,
+                "invoice_id": row.invoice_id,
+                "amount": str(row.amount),
+            },
+        }
+        for row in rows
+    ]
+
+
 def run_all_reconciliation_checks(db: Session, *, school_id: int, as_of: datetime | None = None) -> list[dict]:
     as_of = as_of or datetime.now(timezone.utc)
     findings: list[dict] = []
@@ -264,4 +302,5 @@ def run_all_reconciliation_checks(db: Session, *, school_id: int, as_of: datetim
     findings.extend(_check_confirmed_payments_without_invoice_closure(db=db, school_id=school_id))
     findings.extend(_check_unapplied_negative_charges(db=db, school_id=school_id))
     findings.extend(_check_duplicate_payments(db=db, school_id=school_id))
+    findings.extend(_check_paid_positive_charge_without_payment_evidence(db=db, school_id=school_id))
     return findings

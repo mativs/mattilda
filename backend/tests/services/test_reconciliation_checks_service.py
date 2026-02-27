@@ -249,6 +249,91 @@ def test_reconciliation_detects_unapplied_negative_charge(db_session):
     assert any(item["check_code"] == "unapplied_negative_charge" and item["entity_id"] == negative.id for item in findings)
 
 
+def test_reconciliation_detects_paid_positive_charge_without_payment_evidence(db_session):
+    """
+    Validate check H detects paid positive charge without matching payment evidence.
+
+    1. Seed one paid positive charge linked to invoice without any payments.
+    2. Run all checks once.
+    3. Read findings output.
+    4. Validate paid_charge_without_payment_evidence finding exists.
+    """
+
+    school = create_school(db_session, "Recon H", "recon-h")
+    student = create_student(db_session, "H", "Student", "REC-H-001")
+    link_student_school(db_session, student.id, school.id)
+    invoice = create_invoice(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        period="2027-01",
+        issued_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
+        due_date=date(2027, 1, 10),
+        total_amount="100.00",
+        status=InvoiceStatus.closed,
+    )
+    paid_charge = create_charge(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        description="Paid without payment",
+        amount="100.00",
+        due_date=date(2027, 1, 10),
+        status=ChargeStatus.paid,
+        invoice_id=invoice.id,
+    )
+    findings = run_all_reconciliation_checks(db_session, school_id=school.id, as_of=datetime(2027, 1, 2, tzinfo=timezone.utc))
+    assert any(
+        item["check_code"] == "paid_charge_without_payment_evidence" and item["entity_id"] == paid_charge.id
+        for item in findings
+    )
+
+
+def test_reconciliation_skips_paid_positive_charge_with_payment_evidence(db_session):
+    """
+    Validate check H ignores paid positive charge when payment evidence exists.
+
+    1. Seed one paid positive charge linked to invoice with matching payment.
+    2. Run all checks once.
+    3. Read findings output.
+    4. Validate no paid_charge_without_payment_evidence finding is produced.
+    """
+
+    school = create_school(db_session, "Recon H2", "recon-h2")
+    student = create_student(db_session, "H2", "Student", "REC-H2-001")
+    link_student_school(db_session, student.id, school.id)
+    invoice = create_invoice(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        period="2027-02",
+        issued_at=datetime(2027, 2, 1, tzinfo=timezone.utc),
+        due_date=date(2027, 2, 10),
+        total_amount="100.00",
+        status=InvoiceStatus.closed,
+    )
+    create_charge(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        description="Paid with payment",
+        amount="100.00",
+        due_date=date(2027, 2, 10),
+        status=ChargeStatus.paid,
+        invoice_id=invoice.id,
+    )
+    create_payment(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        invoice_id=invoice.id,
+        amount="100.00",
+        paid_at=datetime(2027, 2, 5, tzinfo=timezone.utc),
+    )
+    findings = run_all_reconciliation_checks(db_session, school_id=school.id, as_of=datetime(2027, 2, 6, tzinfo=timezone.utc))
+    assert not any(item["check_code"] == "paid_charge_without_payment_evidence" for item in findings)
+
+
 def test_reconciliation_detects_duplicate_payments(db_session):
     """
     Validate check G detects duplicate payments in a narrow time window.

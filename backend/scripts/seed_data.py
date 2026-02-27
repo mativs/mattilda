@@ -764,22 +764,66 @@ def seed_tc_lab_fixtures(db: Session, *, admin: User) -> None:
                 )
 
         if tc == 9:
-            create_charge_if_missing(
+            base_fee = create_charge_if_missing(
                 db=db,
                 school_id=tc_school.id,
                 student_id=student.id,
-                fee_definition_id=None,
-                description="TC-09 overdue interest",
-                amount=Decimal("10.00"),
+                fee_definition_id=tc_monthly_fee.id,
+                description="TC-09 base fee paid",
+                amount=Decimal("100.00"),
                 period=overdue_period,
                 debt_created_at=_month_datetime(overdue_month, 1),
                 due_date=overdue_due_date,
-                charge_type=ChargeType.interest,
-                status=ChargeStatus.unpaid,
+                charge_type=ChargeType.fee,
+                status=ChargeStatus.paid,
             )
+            base_invoice = create_invoice_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                period=overdue_period,
+                issued_at=_month_datetime(overdue_month, 1),
+                due_date=overdue_due_date,
+                total_amount=Decimal("100.00"),
+                status=InvoiceStatus.closed,
+            )
+            _attach_invoice_snapshot(db=db, invoice=base_invoice, charges=[base_fee])
+            create_payment_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                invoice_id=base_invoice.id,
+                amount=Decimal("100.00"),
+                paid_at=_month_datetime(overdue_month, 12, 12, 0),
+                method="transfer",
+            )
+            existing_interest = db.execute(
+                select(Charge).where(
+                    Charge.school_id == tc_school.id,
+                    Charge.student_id == student.id,
+                    Charge.description == "TC-09 overdue interest",
+                    Charge.deleted_at.is_(None),
+                )
+            ).scalar_one_or_none()
+            if existing_interest is not None:
+                existing_interest.origin_charge_id = base_fee.id
+            else:
+                create_charge_if_missing(
+                    db=db,
+                    school_id=tc_school.id,
+                    student_id=student.id,
+                    fee_definition_id=None,
+                    description="TC-09 overdue interest",
+                    amount=Decimal("10.00"),
+                    period=overdue_period,
+                    debt_created_at=_month_datetime(overdue_month, 1),
+                    due_date=overdue_due_date,
+                    charge_type=ChargeType.interest,
+                    status=ChargeStatus.unpaid,
+                ).origin_charge_id = base_fee.id
 
         if tc == 10:
-            create_charge_if_missing(
+            fee_charge = create_charge_if_missing(
                 db=db,
                 school_id=tc_school.id,
                 student_id=student.id,
@@ -792,19 +836,50 @@ def seed_tc_lab_fixtures(db: Session, *, admin: User) -> None:
                 charge_type=ChargeType.fee,
                 status=ChargeStatus.paid,
             )
-            create_charge_if_missing(
+            fee_invoice = create_invoice_if_missing(
                 db=db,
                 school_id=tc_school.id,
                 student_id=student.id,
-                fee_definition_id=None,
-                description="TC-10 interest unpaid",
-                amount=Decimal("10.00"),
                 period=recent_past_period,
-                debt_created_at=_month_datetime(recent_past_month, 11),
-                due_date=_month_date(recent_past_month, 11),
-                charge_type=ChargeType.interest,
-                status=ChargeStatus.unpaid,
+                issued_at=_month_datetime(recent_past_month, 1),
+                due_date=_month_date(recent_past_month, 10),
+                total_amount=Decimal("100.00"),
+                status=InvoiceStatus.closed,
             )
+            _attach_invoice_snapshot(db=db, invoice=fee_invoice, charges=[fee_charge])
+            create_payment_if_missing(
+                db=db,
+                school_id=tc_school.id,
+                student_id=student.id,
+                invoice_id=fee_invoice.id,
+                amount=Decimal("100.00"),
+                paid_at=_month_datetime(recent_past_month, 12, 12, 0),
+                method="transfer",
+            )
+            existing_interest = db.execute(
+                select(Charge).where(
+                    Charge.school_id == tc_school.id,
+                    Charge.student_id == student.id,
+                    Charge.description == "TC-10 interest unpaid",
+                    Charge.deleted_at.is_(None),
+                )
+            ).scalar_one_or_none()
+            if existing_interest is not None:
+                existing_interest.origin_charge_id = fee_charge.id
+            else:
+                create_charge_if_missing(
+                    db=db,
+                    school_id=tc_school.id,
+                    student_id=student.id,
+                    fee_definition_id=None,
+                    description="TC-10 interest unpaid",
+                    amount=Decimal("10.00"),
+                    period=recent_past_period,
+                    debt_created_at=_month_datetime(recent_past_month, 11),
+                    due_date=_month_date(recent_past_month, 11),
+                    charge_type=ChargeType.interest,
+                    status=ChargeStatus.unpaid,
+                ).origin_charge_id = fee_charge.id
 
         if tc == 11:
             charge = create_charge_if_missing(
@@ -937,6 +1012,7 @@ def seed_reconciliation_lab_fixtures(db: Session, *, admin: User) -> None:
     - interest_invalid_origin
     - invoice_open_with_sufficient_payments
     - duplicate_payment_window
+    - paid_charge_without_payment_evidence
     """
 
     recon_school = create_school_if_missing(db=db, name="Reconciliation Lab", slug="reconciliation-lab")
@@ -1085,6 +1161,28 @@ def seed_reconciliation_lab_fixtures(db: Session, *, admin: User) -> None:
         amount=Decimal("25.00"),
         paid_at=duplicate_base + timedelta(seconds=30),
         method="card",
+    )
+
+    paid_wo_payment_student = create_student_if_missing(
+        db=db,
+        first_name="RECON-05",
+        last_name="PaidWithoutPayment",
+        external_id="RECON-05-STU",
+    )
+    associate_student_school_if_missing(db=db, student_id=paid_wo_payment_student.id, school_id=recon_school.id)
+    paid_wo_payment_period = f"{today_anchor.year:04d}-{today_anchor.month:02d}-RP"
+    create_charge_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=paid_wo_payment_student.id,
+        fee_definition_id=None,
+        description="RECON-05 paid charge without payment trail",
+        amount=Decimal("90.00"),
+        period=paid_wo_payment_period,
+        debt_created_at=_month_datetime(today_anchor, 7),
+        due_date=_month_date(today_anchor, 25),
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.paid,
     )
 
 
