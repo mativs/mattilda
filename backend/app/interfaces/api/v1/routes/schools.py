@@ -24,6 +24,7 @@ from app.application.services.school_service import (
 from app.domain.roles import UserRole
 from app.infrastructure.db.models import ReconciliationRun, School, User, UserSchoolRole
 from app.infrastructure.db.session import get_db
+from app.infrastructure.logging import get_logger
 from app.infrastructure.tasks.invoice_tasks import enqueue_school_invoice_generation_task
 from app.infrastructure.tasks.reconciliation_tasks import enqueue_reconciliation_task
 from app.interfaces.api.v1.dependencies.auth import (
@@ -50,6 +51,7 @@ from app.interfaces.api.v1.schemas.school import (
 from app.interfaces.api.v1.schemas.student import UserSchoolMembershipPayload
 
 router = APIRouter(prefix="/schools", tags=["schools"])
+logger = get_logger(__name__)
 
 
 @router.get("", response_model=SchoolListResponse)
@@ -157,10 +159,13 @@ def enqueue_school_invoice_generation(
 ):
     if selected_school_id != school_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Path school id must match X-School-Id")
+    logger.info("school_invoice_generation_enqueue_requested", school_id=school_id)
     try:
         task_id = enqueue_school_invoice_generation_task(school_id=school_id)
     except Exception as exc:
+        logger.error("school_invoice_generation_enqueue_failed", school_id=school_id, error=str(exc))
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Failed to enqueue invoice generation task") from exc
+    logger.info("school_invoice_generation_enqueued", school_id=school_id, task_id=task_id)
     return {
         "task_id": task_id,
         "status": "queued",
@@ -182,6 +187,7 @@ def enqueue_school_reconciliation(
 ):
     if selected_school_id != school_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Path school id must match X-School-Id")
+    logger.info("school_reconciliation_enqueue_requested", school_id=school_id, user_id=current_user.id)
     run = create_queued_reconciliation_run(
         db=db,
         school_id=school_id,
@@ -190,7 +196,9 @@ def enqueue_school_reconciliation(
     try:
         task_id = enqueue_reconciliation_task(run_id=run.id)
     except Exception as exc:
+        logger.error("school_reconciliation_enqueue_failed", school_id=school_id, run_id=run.id, error=str(exc))
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Failed to enqueue reconciliation task") from exc
+    logger.info("school_reconciliation_enqueued", school_id=school_id, run_id=run.id, task_id=task_id)
     return {
         "task_id": task_id,
         "run_id": run.id,

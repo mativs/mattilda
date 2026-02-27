@@ -176,6 +176,48 @@ function DashboardPage({ activeSchool, isSchoolAdmin, schoolFinancialSummary, re
     }
   }
 
+  const relevantInvoices = schoolFinancialSummary?.relevant_invoices ?? {
+    overdue_90_plus: [],
+    top_pending_open: [],
+    due_soon_7_days: [],
+  };
+
+  function renderRelevantBucket(title, items, showDaysOverdue = false) {
+    return (
+      <div className="relevant-bucket">
+        <h4>{title}</h4>
+        {items.length === 0 ? (
+          <p className="muted">No relevant invoices in this bucket.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Student</th>
+                <th>Invoice</th>
+                <th>Due date</th>
+                <th>Pending</th>
+                {showDaysOverdue && <th>Days overdue</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={`${item.invoice_id}-${item.student_id}`}>
+                  <td>{item.student_name}</td>
+                  <td>
+                    #{item.invoice_id} - {item.period}
+                  </td>
+                  <td>{item.due_date}</td>
+                  <td>{formatCurrency(item.pending_amount)}</td>
+                  {showDaysOverdue && <td>{item.days_overdue}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    );
+  }
+
   return (
     <section className="page-card">
       <SectionTitle>Dashboard</SectionTitle>
@@ -223,6 +265,12 @@ function DashboardPage({ activeSchool, isSchoolAdmin, schoolFinancialSummary, re
                   <span className="muted">Students</span>
                   <p>{schoolFinancialSummary?.student_count ?? 0}</p>
                 </div>
+              </div>
+              <div className="relevant-invoices-grid">
+                <h3>Relevant invoices</h3>
+                {renderRelevantBucket("Overdue 90+ days", relevantInvoices.overdue_90_plus, true)}
+                {renderRelevantBucket("Top pending open", relevantInvoices.top_pending_open)}
+                {renderRelevantBucket("Due in next 7 days", relevantInvoices.due_soon_7_days)}
               </div>
             </>
           ) : (

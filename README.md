@@ -286,6 +286,10 @@ Frontend admin association actions for user-school and student-school use the ac
   - `total_paid_amount`: sum of all payments received by the school
   - `total_pending_amount`: net sum of unpaid charges (includes negative credits)
   - `student_count`: distinct count of active students linked to the school
+  - `relevant_invoices`: actionable open invoices with pending debt, grouped by:
+    - `overdue_90_plus`: due date is 90+ days in the past
+    - `top_pending_open`: highest pending debt among open invoices
+    - `due_soon_7_days`: due date between today and the next 7 days
 - Admin-only dashboard action:
   - `Generate Invoices (All Students)` queues `POST /api/v1/schools/{school_id}/invoices/generate-all`
   - endpoint responds immediately with `202` and task id while worker processes generation in background

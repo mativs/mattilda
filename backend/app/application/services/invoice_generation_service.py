@@ -10,9 +10,11 @@ from app.application.services.charge_service import get_student_in_school
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
 from app.infrastructure.db.models import Charge, Invoice, InvoiceItem
+from app.infrastructure.logging import get_logger
 
 MONTHLY_INTEREST_RATE = Decimal("0.02")
 AVERAGE_MONTH_DAYS = Decimal("30")
+logger = get_logger(__name__)
 
 
 def _period_label(current_date: date) -> str:
@@ -34,6 +36,7 @@ def generate_invoice_for_student(
 ) -> Invoice:
     as_of = as_of or datetime.now(timezone.utc).date()
     now_dt = datetime.now(timezone.utc)
+    logger.info("invoice_generation_started", school_id=school_id, student_id=student_id, as_of=str(as_of))
     get_student_in_school(db=db, student_id=student_id, school_id=school_id)
 
     open_invoices = list(
@@ -125,6 +128,7 @@ def generate_invoice_for_student(
         .all()
     )
     if not charges_for_invoice:
+        logger.warning("invoice_generation_skipped_no_unpaid_charges", school_id=school_id, student_id=student_id)
         raise ValidationError("No unpaid charges available for invoice generation")
 
     invoice = Invoice(
@@ -156,4 +160,12 @@ def generate_invoice_for_student(
     db.commit()
     db.refresh(invoice)
     invalidate_student_balance_cache(school_id=school_id, student_id=student_id)
+    logger.info(
+        "invoice_generation_completed",
+        school_id=school_id,
+        student_id=student_id,
+        invoice_id=invoice.id,
+        charges_count=len(charges_for_invoice),
+        total_amount=str(invoice.total_amount),
+    )
     return invoice

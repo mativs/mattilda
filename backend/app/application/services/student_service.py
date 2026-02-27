@@ -8,7 +8,10 @@ from app.application.errors import ConflictError, NotFoundError
 from app.application.services.association_sync_service import apply_partial_sync_operations_from_existing_keys
 from app.application.services.student_balance_service import get_student_balance_snapshot
 from app.infrastructure.db.models import School, Student, StudentSchool, User, UserStudent
+from app.infrastructure.logging import get_logger
 from app.interfaces.api.v1.schemas.student import StudentAssociationsUpdate, StudentCreate, StudentUpdate
+
+logger = get_logger(__name__)
 
 
 def list_students_for_school(db: Session, school_id: int) -> list[Student]:
@@ -284,7 +287,7 @@ def get_student_financial_summary(db: Session, *, school_id: int, student_id: in
     total_charged_amount = snapshot["total_charged_amount"]
     total_paid_amount = snapshot["total_paid_amount"]
 
-    return {
+    summary = {
         "total_unpaid_amount": total_unpaid_amount,
         "total_unpaid_debt_amount": total_unpaid_debt_amount,
         "total_unpaid_credit_amount": total_unpaid_credit_amount,
@@ -292,3 +295,13 @@ def get_student_financial_summary(db: Session, *, school_id: int, student_id: in
         "total_paid_amount": total_paid_amount,
         "account_status": "ok" if total_unpaid_amount <= Decimal("0.00") else "owes",
     }
+    logger.info(
+        "student_financial_summary_computed",
+        school_id=school_id,
+        student_id=student_id,
+        total_unpaid_amount=str(summary["total_unpaid_amount"]),
+        total_charged_amount=str(summary["total_charged_amount"]),
+        total_paid_amount=str(summary["total_paid_amount"]),
+        account_status=summary["account_status"],
+    )
+    return summary

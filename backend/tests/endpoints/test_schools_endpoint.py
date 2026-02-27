@@ -193,6 +193,31 @@ def test_get_school_financial_summary_returns_200_for_admin(client, seeded_users
     assert payload["total_paid_amount"] == "40.00"
     assert payload["total_pending_amount"] == "80.00"
     assert payload["student_count"] == 2
+    assert set(payload["relevant_invoices"].keys()) == {"overdue_90_plus", "top_pending_open", "due_soon_7_days"}
+    top_pending_ids = {item["invoice_id"] for item in payload["relevant_invoices"]["top_pending_open"]}
+    assert invoice.id in top_pending_ids
+
+
+def test_get_school_financial_summary_returns_empty_relevant_invoice_buckets(client, seeded_users, db_session):
+    """
+    Validate school financial summary returns empty relevant invoice buckets when no candidates exist.
+
+    1. Seed a new school with admin membership but no invoices/payments.
+    2. Call school financial summary endpoint once as admin.
+    3. Receive successful summary response.
+    4. Validate relevant invoice buckets are all empty arrays.
+    """
+    school = create_school(db_session, "Metrics Empty", "metrics-empty")
+    add_membership(db_session, seeded_users["admin"].id, school.id, UserRole.admin)
+    response = client.get(
+        f"/api/v1/schools/{school.id}/financial-summary",
+        headers=school_header(token_for_user(seeded_users["admin"].id), school.id),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["relevant_invoices"]["overdue_90_plus"] == []
+    assert payload["relevant_invoices"]["top_pending_open"] == []
+    assert payload["relevant_invoices"]["due_soon_7_days"] == []
 
 
 def test_get_school_financial_summary_returns_403_for_non_admin(client, seeded_users):

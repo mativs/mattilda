@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -50,11 +50,28 @@ class SchoolListResponse(BaseModel):
 
 
 class SchoolFinancialSummaryResponse(BaseModel):
+    class RelevantInvoiceSummary(BaseModel):
+        invoice_id: int
+        student_id: int
+        student_name: str
+        period: str
+        due_date: date
+        total_amount: Decimal
+        paid_amount: Decimal
+        pending_amount: Decimal
+        days_overdue: int
+
+    class RelevantInvoiceBuckets(BaseModel):
+        overdue_90_plus: list["SchoolFinancialSummaryResponse.RelevantInvoiceSummary"]
+        top_pending_open: list["SchoolFinancialSummaryResponse.RelevantInvoiceSummary"]
+        due_soon_7_days: list["SchoolFinancialSummaryResponse.RelevantInvoiceSummary"]
+
     total_billed_amount: Decimal
     total_charged_amount: Decimal
     total_paid_amount: Decimal
     total_pending_amount: Decimal
     student_count: int
+    relevant_invoices: RelevantInvoiceBuckets
 
 
 class SchoolInvoiceGenerationTaskResponse(BaseModel):

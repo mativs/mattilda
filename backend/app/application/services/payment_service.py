@@ -9,7 +9,10 @@ from app.application.services.student_balance_service import invalidate_student_
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
 from app.infrastructure.db.models import Charge, Invoice, Payment, Student, StudentSchool, UserStudent
+from app.infrastructure.logging import get_logger
 from app.interfaces.api.v1.schemas.payment import PaymentCreate
+
+logger = get_logger(__name__)
 
 
 def serialize_payment_response(payment: Payment) -> dict:
@@ -69,13 +72,42 @@ def get_invoice_in_school(db: Session, *, invoice_id: int, school_id: int) -> In
 
 
 def create_payment(db: Session, *, school_id: int, payload: PaymentCreate) -> Payment:
+    logger.info(
+        "payment_creation_started",
+        school_id=school_id,
+        student_id=payload.student_id,
+        invoice_id=payload.invoice_id,
+        amount=str(payload.amount),
+    )
     get_student_in_school(db=db, student_id=payload.student_id, school_id=school_id)
     invoice = get_invoice_in_school(db=db, invoice_id=payload.invoice_id, school_id=school_id)
     if invoice.student_id != payload.student_id:
+        logger.warning(
+            "payment_creation_rejected_invoice_student_mismatch",
+            school_id=school_id,
+            student_id=payload.student_id,
+            invoice_id=payload.invoice_id,
+            invoice_student_id=invoice.student_id,
+        )
         raise ValidationError("Invoice does not belong to student")
     if invoice.status != InvoiceStatus.open:
+        logger.warning(
+            "payment_creation_rejected_invoice_not_open",
+            school_id=school_id,
+            student_id=payload.student_id,
+            invoice_id=payload.invoice_id,
+            invoice_status=invoice.status,
+        )
         raise ValidationError("Only open invoices can receive payments")
     if payload.paid_at.date() > invoice.due_date:
+        logger.warning(
+            "payment_creation_rejected_overdue_invoice",
+            school_id=school_id,
+            student_id=payload.student_id,
+            invoice_id=payload.invoice_id,
+            paid_at=str(payload.paid_at),
+            due_date=str(invoice.due_date),
+        )
         raise ValidationError("Overdue invoices cannot receive payments")
 
     payment = Payment(
@@ -91,6 +123,14 @@ def create_payment(db: Session, *, school_id: int, payload: PaymentCreate) -> Pa
     _allocate_payment_to_invoice(db=db, invoice=invoice, payment=payment)
     db.refresh(payment)
     invalidate_student_balance_cache(school_id=school_id, student_id=payload.student_id)
+    logger.info(
+        "payment_creation_completed",
+        school_id=school_id,
+        student_id=payload.student_id,
+        invoice_id=payload.invoice_id,
+        payment_id=payment.id,
+        amount=str(payment.amount),
+    )
     return payment
 
 

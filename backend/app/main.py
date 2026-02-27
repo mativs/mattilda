@@ -6,12 +6,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.application.errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.config import settings
+from app.infrastructure.logging import configure_logging, get_logger
 from app.interfaces.api.v1.router import api_router
+
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    configure_logging()
+    logger.info("app_startup", app_name=settings.app_name, version=settings.app_version)
     yield
+    logger.info("app_shutdown", app_name=settings.app_name)
 
 
 app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)

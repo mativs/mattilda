@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session, selectinload
 from app.application.errors import NotFoundError
 from app.application.services.reconciliation_checks_service import run_all_reconciliation_checks
 from app.infrastructure.db.models import ReconciliationFinding, ReconciliationRun
+from app.infrastructure.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def _build_summary(*, findings: list[dict]) -> dict:
@@ -41,6 +44,12 @@ def create_queued_reconciliation_run(
     db.add(run)
     db.commit()
     db.refresh(run)
+    logger.info(
+        "reconciliation_run_queued",
+        run_id=run.id,
+        school_id=school_id,
+        triggered_by_user_id=triggered_by_user_id,
+    )
     return run
 
 
@@ -51,6 +60,7 @@ def execute_reconciliation_run(db: Session, *, run_id: int) -> ReconciliationRun
     started_at = datetime.now(timezone.utc)
     run.status = "running"
     run.started_at = started_at
+    logger.info("reconciliation_run_started", run_id=run.id, school_id=run.school_id)
     db.flush()
     findings = run_all_reconciliation_checks(db=db, school_id=run.school_id, as_of=started_at)
     for finding in findings:
@@ -71,6 +81,12 @@ def execute_reconciliation_run(db: Session, *, run_id: int) -> ReconciliationRun
     run.summary_json = _build_summary(findings=findings)
     db.commit()
     db.refresh(run)
+    logger.info(
+        "reconciliation_run_completed",
+        run_id=run.id,
+        school_id=run.school_id,
+        findings_total=run.summary_json.get("findings_total", 0) if run.summary_json else 0,
+    )
     return run
 
 
@@ -82,6 +98,7 @@ def mark_reconciliation_run_failed(db: Session, *, run_id: int, error_message: s
     run.finished_at = datetime.now(timezone.utc)
     run.summary_json = {"error": error_message}
     db.commit()
+    logger.error("reconciliation_run_failed", run_id=run_id, school_id=run.school_id, error=error_message)
 
 
 def serialize_reconciliation_finding(finding: ReconciliationFinding) -> dict[str, Any]:

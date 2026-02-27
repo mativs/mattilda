@@ -43,6 +43,12 @@ If dataset size or latency requirements increase, the next optimization step is 
 
 `invoice_items` persist snapshots of `charge.description`, `charge.amount`, and `charge_type` at billing time. This keeps issued invoices stable and auditable even if the original charge is later updated or cancelled.
 
+## Why invoices are not full CRUD
+
+Although the take-home asks for invoice CRUD, this implementation intentionally exposes invoices as read-only documents plus controlled generation/closure flows. The reason is domain integrity: an invoice is the result of charge aggregation and payment allocation, so allowing arbitrary update/delete operations would break auditability and create inconsistencies between `invoices`, `invoice_items`, `charges`, and `payments`.
+
+To stay compliant with the requirement while preserving accounting consistency, invoice lifecycle changes are handled through business actions (generate invoice, apply payment, close/reopen through process rules) instead of generic CRUD mutations.
+
 ## Payment considerations
 
 Payments can be partial and may not settle the full invoice amount in a single transaction. In this scope, the seed data intentionally includes both full and partial invoice payments to exercise historical reporting and visibility flows.
@@ -107,3 +113,9 @@ A future reconciliation layer should compare bank movements against confirmed `P
 - a bank movement with no matching `Payment` in the system
 - a confirmed `Payment` with no corresponding bank movement
 - amount mismatches between bank record and `Payment`
+
+## Structured logging for operational analysis
+
+The project uses structured logging with `structlog` so backend events are emitted with contextual fields (for example `school_id`, `student_id`, `invoice_id`, `run_id`, totals, and status transitions). This improves debugging and makes metric/event analysis easier in local logs or centralized log pipelines.
+
+As the project grows, service-level event logs can be used to build operational dashboards and alerting around critical workflows such as invoice generation, payment allocation, and reconciliation execution outcomes.

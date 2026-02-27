@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import delete, func, select
@@ -9,7 +9,10 @@ from app.domain.charge_enums import ChargeStatus
 from app.domain.invoice_status import InvoiceStatus
 from app.domain.roles import UserRole
 from app.infrastructure.db.models import Charge, Invoice, Payment, School, Student, StudentSchool, User, UserSchoolRole
+from app.infrastructure.logging import get_logger
 from app.interfaces.api.v1.schemas.school import SchoolCreate, SchoolUpdate
+
+logger = get_logger(__name__)
 
 
 def _build_member_map(school: School) -> list[dict]:
@@ -206,11 +209,99 @@ def get_school_financial_summary(db: Session, *, school_id: int) -> dict:
         .join(Student, Student.id == StudentSchool.student_id)
         .where(StudentSchool.school_id == school_id, Student.deleted_at.is_(None))
     ).scalar_one()
+    payment_totals = (
+        select(
+            Payment.invoice_id.label("invoice_id"),
+            func.coalesce(func.sum(Payment.amount), 0).label("paid_amount"),
+        )
+        .where(
+            Payment.school_id == school_id,
+            Payment.deleted_at.is_(None),
+            Payment.invoice_id.is_not(None),
+        )
+        .group_by(Payment.invoice_id)
+        .subquery()
+    )
+    open_invoice_rows = db.execute(
+        select(
+            Invoice.id.label("invoice_id"),
+            Invoice.student_id.label("student_id"),
+            Student.first_name.label("first_name"),
+            Student.last_name.label("last_name"),
+            Invoice.period.label("period"),
+            Invoice.due_date.label("due_date"),
+            Invoice.total_amount.label("total_amount"),
+            func.coalesce(payment_totals.c.paid_amount, 0).label("paid_amount"),
+        )
+        .join(Student, Student.id == Invoice.student_id)
+        .outerjoin(payment_totals, payment_totals.c.invoice_id == Invoice.id)
+        .where(
+            Invoice.school_id == school_id,
+            Invoice.deleted_at.is_(None),
+            Invoice.status == InvoiceStatus.open,
+        )
+        .order_by(Invoice.id.desc())
+    ).all()
+    today = date.today()
+    relevant_base: list[dict] = []
+    for row in open_invoice_rows:
+        total_amount = Decimal(row.total_amount).quantize(Decimal("0.01"))
+        paid_amount = Decimal(row.paid_amount).quantize(Decimal("0.01"))
+        pending_amount = (total_amount - paid_amount).quantize(Decimal("0.01"))
+        if pending_amount <= Decimal("0.00"):
+            continue
+        days_overdue = max((today - row.due_date).days, 0)
+        relevant_base.append(
+            {
+                "invoice_id": row.invoice_id,
+                "student_id": row.student_id,
+                "student_name": f"{row.first_name} {row.last_name}".strip(),
+                "period": row.period,
+                "due_date": row.due_date,
+                "total_amount": total_amount,
+                "paid_amount": paid_amount,
+                "pending_amount": pending_amount,
+                "days_overdue": days_overdue,
+            }
+        )
+    overdue_90_plus = [item for item in relevant_base if item["days_overdue"] >= 90]
+    top_pending_open = sorted(
+        relevant_base,
+        key=lambda item: (
+            item["pending_amount"] * Decimal("-1"),
+            item["due_date"],
+            item["invoice_id"],
+        ),
+    )[:5]
+    due_soon_threshold = today + timedelta(days=7)
+    due_soon_7_days = [
+        item
+        for item in relevant_base
+        if today <= item["due_date"] <= due_soon_threshold
+    ]
 
-    return {
+    summary = {
         "total_billed_amount": Decimal(billed_total).quantize(Decimal("0.01")),
         "total_charged_amount": Decimal(charged_total).quantize(Decimal("0.01")),
         "total_paid_amount": Decimal(paid_total).quantize(Decimal("0.01")),
         "total_pending_amount": Decimal(pending_total).quantize(Decimal("0.01")),
         "student_count": int(student_count),
+        "relevant_invoices": {
+            "overdue_90_plus": overdue_90_plus,
+            "top_pending_open": top_pending_open,
+            "due_soon_7_days": due_soon_7_days,
+        },
     }
+    logger.info(
+        "school_financial_summary_computed",
+        school_id=school_id,
+        total_billed_amount=str(summary["total_billed_amount"]),
+        total_charged_amount=str(summary["total_charged_amount"]),
+        total_paid_amount=str(summary["total_paid_amount"]),
+        total_pending_amount=str(summary["total_pending_amount"]),
+        student_count=summary["student_count"],
+        relevant_overdue_90_count=len(overdue_90_plus),
+        relevant_top_pending_count=len(top_pending_open),
+        relevant_due_soon_count=len(due_soon_7_days),
+    )
+    return summary

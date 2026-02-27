@@ -1,3 +1,5 @@
+from datetime import date, datetime, timedelta, timezone
+
 import pytest
 
 from app.application.errors import ConflictError, NotFoundError
@@ -5,15 +7,24 @@ from app.application.services.school_service import (
     add_user_school_role,
     create_school,
     delete_school,
+    get_school_financial_summary,
     get_school_by_id,
     list_schools_for_user,
     remove_user_school_roles,
     serialize_school_response,
     update_school,
 )
+from app.domain.invoice_status import InvoiceStatus
 from app.domain.roles import UserRole
 from app.interfaces.api.v1.schemas.school import SchoolCreate, SchoolMemberAssignment, SchoolUpdate
-from tests.helpers.factories import add_membership, create_school as factory_create_school
+from tests.helpers.factories import (
+    add_membership,
+    create_invoice,
+    create_payment,
+    create_school as factory_create_school,
+    create_student,
+    link_student_school,
+)
 from tests.helpers.factories import create_user as factory_create_user
 
 
@@ -323,3 +334,112 @@ def test_remove_user_school_roles_raises_for_missing_membership(db_session):
     with pytest.raises(NotFoundError) as exc:
         remove_user_school_roles(db_session, school.id, user.id)
     assert str(exc.value) == "Membership not found"
+
+
+def test_get_school_financial_summary_includes_relevant_invoice_buckets(db_session, seeded_users):
+    """
+    Validate relevant invoice bucket classification and pending calculations.
+
+    1. Seed open invoices across overdue, due-soon, and top-pending scenarios.
+    2. Seed partial and full payments to exercise pending amount logic.
+    3. Call get_school_financial_summary service once.
+    4. Validate bucket membership and paid/pending values.
+    """
+    today = date.today()
+    school_id = seeded_users["north_school"].id
+
+    extra_student = create_student(db_session, "Case", "Extra", "REL-EXTRA")
+    link_student_school(db_session, extra_student.id, school_id)
+
+    overdue_invoice = create_invoice(
+        db_session,
+        school_id=school_id,
+        student_id=seeded_users["child_one"].id,
+        period="REL-OD",
+        issued_at=datetime.now(timezone.utc) - timedelta(days=130),
+        due_date=today - timedelta(days=100),
+        total_amount="120.00",
+        status=InvoiceStatus.open,
+    )
+    create_payment(
+        db_session,
+        school_id=school_id,
+        student_id=seeded_users["child_one"].id,
+        invoice_id=overdue_invoice.id,
+        amount="20.00",
+        paid_at=datetime.now(timezone.utc),
+    )
+
+    due_soon_invoice = create_invoice(
+        db_session,
+        school_id=school_id,
+        student_id=seeded_users["child_two"].id,
+        period="REL-SOON",
+        issued_at=datetime.now(timezone.utc),
+        due_date=today + timedelta(days=3),
+        total_amount="50.00",
+        status=InvoiceStatus.open,
+    )
+
+    top_pending_invoice = create_invoice(
+        db_session,
+        school_id=school_id,
+        student_id=extra_student.id,
+        period="REL-TOP",
+        issued_at=datetime.now(timezone.utc),
+        due_date=today + timedelta(days=2),
+        total_amount="300.00",
+        status=InvoiceStatus.open,
+    )
+
+    fully_paid_open_invoice = create_invoice(
+        db_session,
+        school_id=school_id,
+        student_id=extra_student.id,
+        period="REL-PAID",
+        issued_at=datetime.now(timezone.utc),
+        due_date=today + timedelta(days=5),
+        total_amount="70.00",
+        status=InvoiceStatus.open,
+    )
+    create_payment(
+        db_session,
+        school_id=school_id,
+        student_id=extra_student.id,
+        invoice_id=fully_paid_open_invoice.id,
+        amount="70.00",
+        paid_at=datetime.now(timezone.utc),
+    )
+
+    payload = get_school_financial_summary(db_session, school_id=school_id)
+    buckets = payload["relevant_invoices"]
+
+    overdue_ids = {item["invoice_id"] for item in buckets["overdue_90_plus"]}
+    due_soon_ids = {item["invoice_id"] for item in buckets["due_soon_7_days"]}
+    top_pending_ids = [item["invoice_id"] for item in buckets["top_pending_open"]]
+    assert overdue_invoice.id in overdue_ids
+    assert due_soon_invoice.id in due_soon_ids
+    assert top_pending_invoice.id == top_pending_ids[0]
+    assert fully_paid_open_invoice.id not in overdue_ids
+    assert fully_paid_open_invoice.id not in due_soon_ids
+    assert fully_paid_open_invoice.id not in top_pending_ids
+
+    overdue_item = next(item for item in buckets["overdue_90_plus"] if item["invoice_id"] == overdue_invoice.id)
+    assert str(overdue_item["paid_amount"]) == "20.00"
+    assert str(overdue_item["pending_amount"]) == "100.00"
+
+
+def test_get_school_financial_summary_returns_empty_relevant_buckets_without_open_pending_invoices(db_session, seeded_users):
+    """
+    Validate relevant invoice buckets are empty when no open pending invoices exist.
+
+    1. Ensure no invoice or payment records are seeded for target school.
+    2. Call get_school_financial_summary service once.
+    3. Read relevant_invoices object from response.
+    4. Validate all bucket arrays are empty.
+    """
+    payload = get_school_financial_summary(db_session, school_id=seeded_users["north_school"].id)
+    buckets = payload["relevant_invoices"]
+    assert buckets["overdue_90_plus"] == []
+    assert buckets["top_pending_open"] == []
+    assert buckets["due_soon_7_days"] == []
