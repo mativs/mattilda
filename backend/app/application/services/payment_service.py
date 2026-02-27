@@ -138,25 +138,6 @@ def _sorted_positive_charges(charges: list[Charge]) -> list[Charge]:
     return sorted(charges, key=lambda charge: (charge.debt_created_at, -charge.amount, charge.id))
 
 
-def _create_residual_unpaid_charge(db: Session, *, source: Charge, residual_amount: Decimal) -> Charge:
-    residual = Charge(
-        school_id=source.school_id,
-        student_id=source.student_id,
-        fee_definition_id=source.fee_definition_id,
-        invoice_id=source.invoice_id,
-        origin_charge_id=source.id,
-        description=f"{source.description} (remaining)",
-        amount=residual_amount,
-        period=source.period,
-        debt_created_at=source.debt_created_at,
-        due_date=source.due_date,
-        charge_type=source.charge_type,
-        status=ChargeStatus.unpaid,
-    )
-    db.add(residual)
-    return residual
-
-
 def _allocate_payment_to_invoice(db: Session, *, invoice: Invoice, payment: Payment) -> None:
     invoice_charges = list(
         db.execute(
@@ -179,58 +160,24 @@ def _allocate_payment_to_invoice(db: Session, *, invoice: Invoice, payment: Paym
 
     credit_from_negative = sum((charge.amount.copy_abs() for charge in negative_unpaid), Decimal("0.00"))
     total_allocatable = payment.amount + credit_from_negative
-    total_positive = sum((charge.amount for charge in positive_unpaid), Decimal("0.00"))
     total_allocatable = total_allocatable.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     for charge in negative_unpaid:
         charge.status = ChargeStatus.paid
 
-    if total_allocatable >= total_positive:
-        for charge in positive_unpaid:
-            charge.status = ChargeStatus.paid
-    else:
-        remaining = total_allocatable
-        for charge in _sorted_positive_charges(positive_unpaid):
-            if remaining <= Decimal("0.00"):
-                break
-            if remaining >= charge.amount:
-                charge.status = ChargeStatus.paid
-                remaining -= charge.amount
-                continue
-            charge.status = ChargeStatus.paid
-            residual_amount = (charge.amount - remaining).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            _create_residual_unpaid_charge(db=db, source=charge, residual_amount=residual_amount)
-            remaining = Decimal("0.00")
+    remaining = total_allocatable
+    for charge in _sorted_positive_charges(positive_unpaid):
+        if remaining <= Decimal("0.00"):
             break
+        if remaining >= charge.amount:
+            charge.status = ChargeStatus.paid
+            remaining -= charge.amount
+            continue
+        # Do not split charge on partial cutoff; keep charge unpaid
+        break
 
-    if total_allocatable >= total_positive:
-        invoice.status = InvoiceStatus.closed
-
-    confirmed_payments_total = sum(
-        (
-            amount
-            for amount in db.execute(
-                select(Payment.amount).where(
-                    Payment.invoice_id == invoice.id,
-                    Payment.school_id == invoice.school_id,
-                    Payment.deleted_at.is_(None),
-                )
-            )
-            .scalars()
-            .all()
-        ),
-        Decimal("0.00"),
-    )
-    paid_positive_charges_total = sum(
-        (
-            charge.amount
-            for charge in invoice_charges
-            if charge.status == ChargeStatus.paid and charge.amount > Decimal("0.00")
-        ),
-        Decimal("0.00"),
-    )
-    balance = (confirmed_payments_total - paid_positive_charges_total).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    if balance > Decimal("0.00"):
+    carry_credit_amount = remaining.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if carry_credit_amount > Decimal("0.00"):
         db.add(
             Charge(
                 school_id=invoice.school_id,
@@ -239,7 +186,7 @@ def _allocate_payment_to_invoice(db: Session, *, invoice: Invoice, payment: Paym
                 invoice_id=None,
                 origin_charge_id=None,
                 description=f"Carry credit from invoice #{invoice.id}",
-                amount=(balance * Decimal("-1")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+                amount=(carry_credit_amount * Decimal("-1")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
                 period=invoice.period,
                 debt_created_at=datetime.now(timezone.utc),
                 due_date=invoice.due_date,
@@ -247,6 +194,7 @@ def _allocate_payment_to_invoice(db: Session, *, invoice: Invoice, payment: Paym
                 status=ChargeStatus.unpaid,
             )
         )
+    invoice.status = InvoiceStatus.closed
     db.commit()
 
 

@@ -12,8 +12,8 @@ def test_tc_04_simple_partial_payment(client, db_session, seeded_users):
 
     1. Seed one fee 100 in an open invoice.
     2. Create payment of 60 through API.
-    3. Validate source charge is paid and residual 40 is created.
-    4. Validate invoice remains open.
+    3. Validate source charge remains unpaid and carry credit -60 is created.
+    4. Validate invoice is closed.
     """
     school, student, headers = setup_tc_context(db_session, seeded_users, tc_code="04")
     invoice, charges = create_open_invoice_with_charges(
@@ -38,10 +38,10 @@ def test_tc_04_simple_partial_payment(client, db_session, seeded_users):
     )
     assert response.status_code == 201
     db_session.refresh(invoice)
-    assert invoice.status == InvoiceStatus.open
+    assert invoice.status == InvoiceStatus.closed
     all_charges = list(student.charges)
     source = next(charge for charge in all_charges if charge.id == source_charge_id)
-    residual = next(charge for charge in all_charges if charge.origin_charge_id == source_charge_id)
-    assert source.status == ChargeStatus.paid
-    assert residual.status == ChargeStatus.unpaid
-    assert residual.amount == Decimal("40.00")
+    carry_credit = next(charge for charge in all_charges if charge.invoice_id is None and charge.amount < Decimal("0.00"))
+    assert source.status == ChargeStatus.unpaid
+    assert carry_credit.status == ChargeStatus.unpaid
+    assert carry_credit.amount == Decimal("-60.00")

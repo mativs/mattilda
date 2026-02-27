@@ -193,6 +193,11 @@ Frontend admin association actions for user-school and student-school use the ac
 - `GET /api/v1/invoices/{invoice_id}` (invoice detail with nested `items`)
 - `GET /api/v1/invoices/{invoice_id}/items` (invoice items list; compatibility read endpoint)
 - `POST /api/v1/students/{student_id}/invoices/generate` (admin only; closes existing open invoice, computes interest deltas, and creates a new open invoice from unpaid charges)
+- Invoice generation behavior (`POST /api/v1/students/{student_id}/invoices/generate`):
+  - closes any existing open invoice for that student
+  - computes overdue interest deltas only for unpaid `fee` charges
+  - does not compound interest over interest
+  - creates a new open invoice from current unpaid charges and snapshots them into invoice items
 - Visibility rules:
   - school `admin`: can read all invoices from active school
   - non-admin: can read invoices only for students associated to current user in active school
@@ -207,7 +212,10 @@ Frontend admin association actions for user-school and student-school use the ac
   - invoice is required
   - invoice must be open
   - overdue invoices are rejected (`400`)
-  - payment allocation marks charges paid/unpaid using deterministic ordering and may split a cutoff charge
+  - payment allocation uses deterministic ordering and pays only fully-coverable charges
+  - if allocation reaches a partial cutoff, cutoff charge remains unpaid (no split residual charge)
+  - leftover amount that cannot be allocated to a full charge is recorded as a negative carry credit charge
+  - accepted payment closes the invoice
 - Visibility rules:
   - school `admin`: can read all payments from active school
   - non-admin: can read payments only for students associated to current user in active school

@@ -46,20 +46,20 @@ Open `Configuration > Students`, search by `TC-XX`, then open the student dashbo
 ### TC-04 `TC04 SimplePartialPayment`
 - **Case**: Partial payment leaves remaining debt.
 - **Do**: Pay less than total invoice amount.
-- **Expect**: Invoice stays open; part of debt remains unpaid.
-- **Why**: Closure requires reaching invoice settlement threshold.
+- **Expect**: Invoice closes; source charge stays unpaid; a negative carry credit is created for the unallocatable amount.
+- **Why**: This design avoids splitting charges and keeps allocation deterministic: only fully coverable lines are paid in-cycle, and remainder is preserved as credit for next invoice.
 
 ### TC-05 `TC05 PartialAcrossMultipleCharges`
 - **Case**: Partial funds are allocated deterministically across several charges.
-- **Do**: Pay amount insufficient to clear all lines.
-- **Expect**: Earlier-priority charges are paid first; remainder stays unpaid.
-- **Why**: Allocation order is deterministic to keep accounting reproducible.
+- **Do**: Pay amount insufficient to clear all lines (more than 100)
+- **Expect**: Earlier-priority fully coverable charges are paid; cutoff and later charges stay unpaid; leftover remainder becomes negative carry credit; invoice closes.
+- **Why**: Allocation uses full-line settlement only. Unallocatable remainder is stored as credit instead of splitting debt rows.
 
 ### TC-06 `TC06 PartialExactBoundary`
 - **Case**: Payment ends exactly at a charge boundary.
 - **Do**: Pay amount equal to sum of first N prioritized charges.
-- **Expect**: Those charges paid; later charges unchanged unpaid; no split residual for boundary charge.
-- **Why**: Residual split is only needed when payment cuts through a charge, not at exact boundary.
+- **Expect**: Those charges are paid, later charges remain unpaid, no carry credit is created, and invoice closes.
+- **Why**: Exact-boundary settlement consumes payment with zero remainder. With no unallocatable amount, no carry credit is needed.
 
 ### TC-07 `TC07 OverdueFeeGeneratesInterest`
 - **Case**: Overdue fee generates interest on invoice generation.

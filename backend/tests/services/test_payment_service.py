@@ -323,14 +323,14 @@ def test_create_payment_marks_all_positive_charges_paid_when_fully_covered(db_se
     assert db_session.get(Charge, second.id).status == ChargeStatus.paid
 
 
-def test_create_payment_splits_charge_on_partial_cutoff(db_session):
+def test_create_payment_keeps_cutoff_charge_unpaid_and_creates_carry_credit(db_session):
     """
-    Validate payment allocation splits cutoff charge on partial payment.
+    Validate payment allocation keeps cutoff charge unpaid and creates carry credit.
 
     1. Seed open invoice with one unpaid charge amount 100.00.
     2. Create payment for 30.00 once.
-    3. Validate source charge marked paid.
-    4. Validate residual unpaid charge is created with origin reference.
+    3. Validate source charge remains unpaid and invoice closes.
+    4. Validate carry credit charge is created for unallocatable remainder.
     """
     school = create_school(db_session, "North Split", "north-split-payment")
     student = create_student(db_session, "Split", "Pay", "PAY-STU-010")
@@ -374,30 +374,33 @@ def test_create_payment_splits_charge_on_partial_cutoff(db_session):
         ),
     )
     refreshed_source = db_session.get(Charge, source.id)
-    residuals = list(
+    refreshed_invoice = db_session.get(Invoice, invoice.id)
+    carry_credits = list(
         db_session.execute(
             select(Charge).where(
-                Charge.origin_charge_id == source.id,
+                Charge.student_id == student.id,
+                Charge.invoice_id.is_(None),
+                Charge.amount < Decimal("0.00"),
                 Charge.deleted_at.is_(None),
             )
         )
         .scalars()
         .all()
     )
-    assert refreshed_source is not None and refreshed_source.status == ChargeStatus.paid
-    assert len(residuals) == 1
-    assert residuals[0].status == ChargeStatus.unpaid
-    assert residuals[0].amount == Decimal("70.00")
+    assert refreshed_source is not None and refreshed_source.status == ChargeStatus.unpaid
+    assert refreshed_invoice is not None and refreshed_invoice.status == InvoiceStatus.closed
+    assert len(carry_credits) == 1
+    assert carry_credits[0].amount == Decimal("-30.00")
 
 
-def test_create_payment_partial_flow_hits_continue_then_split(db_session):
+def test_create_payment_partial_flow_pays_full_lines_and_creates_carry_credit(db_session):
     """
-    Validate partial allocation continues across one fully covered charge then splits next.
+    Validate partial allocation pays full line, keeps cutoff unpaid, and creates carry credit.
 
     1. Seed open invoice with two unpaid charges 20 and 40.
     2. Create payment amount 30 to partially cover invoice.
-    3. Reload charges and residuals from database.
-    4. Validate first is paid and one residual exists for second.
+    3. Reload charges and carry credit from database.
+    4. Validate first is paid, second unpaid, invoice closed, and carry exists.
     """
     school = create_school(db_session, "North Continue", "north-continue-payment")
     student = create_student(db_session, "Continue", "Pay", "PAY-STU-013")
@@ -454,12 +457,24 @@ def test_create_payment_partial_flow_hits_continue_then_split(db_session):
             method="transfer",
         ),
     )
-    residuals = list(
-        db_session.execute(select(Charge).where(Charge.origin_charge_id == second.id, Charge.deleted_at.is_(None))).scalars().all()
+    carry_credits = list(
+        db_session.execute(
+            select(Charge).where(
+                Charge.student_id == student.id,
+                Charge.invoice_id.is_(None),
+                Charge.amount < Decimal("0.00"),
+                Charge.deleted_at.is_(None),
+            )
+        )
+        .scalars()
+        .all()
     )
+    refreshed_invoice = db_session.get(Invoice, invoice.id)
     assert db_session.get(Charge, first.id).status == ChargeStatus.paid
-    assert len(residuals) == 1
-    assert residuals[0].amount == Decimal("30.00")
+    assert db_session.get(Charge, second.id).status == ChargeStatus.unpaid
+    assert refreshed_invoice is not None and refreshed_invoice.status == InvoiceStatus.closed
+    assert len(carry_credits) == 1
+    assert carry_credits[0].amount == Decimal("-10.00")
 
 
 def test_create_payment_marks_negative_charges_paid(db_session):
@@ -522,7 +537,7 @@ def test_create_payment_partial_flow_hits_zero_remaining_break(db_session):
     1. Seed open invoice with two unpaid charges amount 10 and 10.
     2. Create payment for 10 once.
     3. Reload charges from database.
-    4. Validate first is paid and second remains unpaid.
+    4. Validate first is paid, second remains unpaid, and invoice closes.
     """
     school = create_school(db_session, "North Zero", "north-zero-payment")
     student = create_student(db_session, "Zero", "Pay", "PAY-STU-015")
@@ -579,8 +594,23 @@ def test_create_payment_partial_flow_hits_zero_remaining_break(db_session):
             method="transfer",
         ),
     )
+    refreshed_invoice = db_session.get(Invoice, invoice.id)
+    carry_credits = list(
+        db_session.execute(
+            select(Charge).where(
+                Charge.student_id == student.id,
+                Charge.invoice_id.is_(None),
+                Charge.amount < Decimal("0.00"),
+                Charge.deleted_at.is_(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert db_session.get(Charge, first.id).status == ChargeStatus.paid
     assert db_session.get(Charge, second.id).status == ChargeStatus.unpaid
+    assert refreshed_invoice is not None and refreshed_invoice.status == InvoiceStatus.closed
+    assert carry_credits == []
 
 
 def test_visibility_helpers_filter_non_admin_access(db_session):
