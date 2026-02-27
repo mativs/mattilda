@@ -16,6 +16,7 @@ from app.interfaces.api.v1.dependencies.auth import (
     require_school_roles,
     require_self_or_school_roles,
 )
+from tests.helpers.factories import commit_session
 
 
 def test_decode_access_token_returns_user_id_for_valid_token():
@@ -143,7 +144,7 @@ def test_authenticate_user_returns_none_for_inactive_user(db_session, seeded_use
     4. Validate helper returns None.
     """
     seeded_users["admin"].is_active = False
-    db_session.commit()
+    commit_session(db_session)
     assert authenticate_user(db_session, email="admin@example.com", password="admin123") is None
 
 

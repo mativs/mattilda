@@ -5,7 +5,15 @@ from app.domain.invoice_status import InvoiceStatus
 from app.domain.roles import UserRole
 from app.infrastructure.db.models import ReconciliationFinding, ReconciliationRun
 from tests.helpers.auth import auth_header, school_header, token_for_user
-from tests.helpers.factories import add_membership, create_charge, create_invoice, create_payment, create_school
+from tests.helpers.factories import (
+    add_membership,
+    create_charge,
+    create_invoice,
+    create_payment,
+    create_school,
+    persist_entity,
+    refresh_entity,
+)
 
 
 def test_get_schools_returns_200_for_authenticated_user(client, seeded_users):
@@ -414,9 +422,8 @@ def test_get_school_reconciliation_runs_returns_paginated_list_for_admin(client,
         finished_at=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
         summary_json={"findings_total": 0},
     )
-    db_session.add(run)
-    db_session.commit()
-    db_session.refresh(run)
+    persist_entity(db_session, run)
+    refresh_entity(db_session, run)
     response = client.get(
         f"/api/v1/schools/{seeded_users['north_school'].id}/reconciliation/runs",
         headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
@@ -443,8 +450,7 @@ def test_get_school_reconciliation_run_detail_returns_findings_for_admin(client,
         finished_at=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
         summary_json={"findings_total": 1},
     )
-    db_session.add(run)
-    db_session.flush()
+    persist_entity(db_session, run)
     finding = ReconciliationFinding(
         run_id=run.id,
         school_id=seeded_users["north_school"].id,
@@ -455,8 +461,7 @@ def test_get_school_reconciliation_run_detail_returns_findings_for_admin(client,
         message="mismatch",
         details_json={"invoice_total": "10.00", "items_total": "9.00"},
     )
-    db_session.add(finding)
-    db_session.commit()
+    persist_entity(db_session, finding)
     response = client.get(
         f"/api/v1/schools/{seeded_users['north_school'].id}/reconciliation/runs/{run.id}",
         headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),

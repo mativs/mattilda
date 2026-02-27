@@ -1,6 +1,7 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.application.services.security_service import hash_password
@@ -177,3 +178,87 @@ def create_payment(
     db.commit()
     db.refresh(payment)
     return payment
+
+
+def persist_entities(db: Session, *entities: object) -> None:
+    db.add_all(list(entities))
+    db.commit()
+
+
+def persist_entity(db: Session, entity: object) -> None:
+    db.add(entity)
+    db.commit()
+
+
+def commit_session(db: Session) -> None:
+    db.commit()
+
+
+def refresh_entity(db: Session, entity: object) -> None:
+    db.refresh(entity)
+
+
+def get_entity_by_id(db: Session, model: type, entity_id: int):
+    return db.get(model, entity_id)
+
+
+def list_from_query(db: Session, query: Select):
+    return list(db.execute(query).scalars().all())
+
+
+def list_charges_for_student(db: Session, *, student_id: int) -> list[Charge]:
+    return list_from_query(db, select(Charge).where(Charge.student_id == student_id))
+
+
+def list_charges_for_invoice(db: Session, *, invoice_id: int) -> list[Charge]:
+    return list_from_query(db, select(Charge).where(Charge.invoice_id == invoice_id))
+
+
+def list_interest_charges_for_student(db: Session, *, student_id: int) -> list[Charge]:
+    return list_from_query(
+        db,
+        select(Charge).where(
+            Charge.student_id == student_id,
+            Charge.charge_type == ChargeType.interest,
+        ),
+    )
+
+
+def list_interest_charges_for_origin(db: Session, *, origin_charge_id: int) -> list[Charge]:
+    return list_from_query(
+        db,
+        select(Charge).where(
+            Charge.origin_charge_id == origin_charge_id,
+            Charge.charge_type == ChargeType.interest,
+            Charge.deleted_at.is_(None),
+        ),
+    )
+
+
+def list_negative_unpaid_carry_for_student(db: Session, *, student_id: int) -> list[Charge]:
+    return list_from_query(
+        db,
+        select(Charge).where(
+            Charge.student_id == student_id,
+            Charge.invoice_id.is_(None),
+            Charge.amount < Decimal("0.00"),
+            Charge.status == ChargeStatus.unpaid,
+            Charge.deleted_at.is_(None),
+        ),
+    )
+
+
+def get_negative_charge_for_invoice(db: Session, *, invoice_id: int) -> Charge:
+    return db.execute(
+        select(Charge).where(Charge.invoice_id == invoice_id, Charge.amount < 0, Charge.deleted_at.is_(None))
+    ).scalar_one()
+
+
+def list_invoice_items_for_invoice(db: Session, *, invoice_id: int) -> list[InvoiceItem]:
+    return list_from_query(db, select(InvoiceItem).where(InvoiceItem.invoice_id == invoice_id))
+
+
+def list_reconciliation_runs(db: Session, *, school_id: int) -> list:
+    from app.application.services.reconciliation_service import list_reconciliation_runs_query
+
+    return list_from_query(db, list_reconciliation_runs_query(school_id=school_id))

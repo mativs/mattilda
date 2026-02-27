@@ -19,6 +19,7 @@ from app.application.services.student_service import (
     update_student,
 )
 from app.interfaces.api.v1.schemas.student import StudentCreate, StudentUpdate
+from tests.helpers.factories import commit_session
 from tests.helpers.factories import create_school, create_student as factory_create_student
 from tests.helpers.factories import create_user as factory_create_user
 from tests.helpers.factories import link_student_school, link_user_student
@@ -439,7 +440,7 @@ def test_serialize_student_response_excludes_deleted_user_and_school_refs(db_ses
     link_user_student(db_session, user.id, student.id)
     user.deleted_at = datetime.now(timezone.utc)
     school.deleted_at = datetime.now(timezone.utc)
-    db_session.commit()
+    commit_session(db_session)
     serialized = serialize_student_response(student)
     assert user.id not in serialized["user_ids"]
     assert school.id not in serialized["school_ids"]

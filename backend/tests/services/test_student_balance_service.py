@@ -8,7 +8,7 @@ from app.application.services.student_balance_service import (
 )
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.infrastructure.db.models import Charge
-from tests.helpers.factories import create_school, create_student, create_payment, link_student_school
+from tests.helpers.factories import create_school, create_student, create_payment, link_student_school, persist_entities
 
 
 def test_get_student_balance_snapshot_reads_from_cache_when_present(db_session, monkeypatch):
@@ -52,37 +52,36 @@ def test_get_student_balance_snapshot_computes_and_caches_when_missing(db_sessio
     school = create_school(db_session, "Cache School", "cache-school")
     student = create_student(db_session, "Cache", "Kid", "CACHE-STU-001")
     link_student_school(db_session, student.id, school.id)
-    db_session.add_all(
-        [
-            Charge(
-                school_id=school.id,
-                student_id=student.id,
-                invoice_id=None,
-                fee_definition_id=None,
-                origin_charge_id=None,
-                description="Main debt",
-                amount=Decimal("120.00"),
-                period="2026-01",
-                debt_created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                due_date=datetime(2026, 1, 10, tzinfo=timezone.utc).date(),
-                charge_type=ChargeType.fee,
-                status=ChargeStatus.unpaid,
-            ),
-            Charge(
-                school_id=school.id,
-                student_id=student.id,
-                invoice_id=None,
-                fee_definition_id=None,
-                origin_charge_id=None,
-                description="Credit",
-                amount=Decimal("-20.00"),
-                period="2026-01",
-                debt_created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
-                due_date=datetime(2026, 1, 10, tzinfo=timezone.utc).date(),
-                charge_type=ChargeType.penalty,
-                status=ChargeStatus.unpaid,
-            ),
-        ]
+    persist_entities(
+        db_session,
+        Charge(
+            school_id=school.id,
+            student_id=student.id,
+            invoice_id=None,
+            fee_definition_id=None,
+            origin_charge_id=None,
+            description="Main debt",
+            amount=Decimal("120.00"),
+            period="2026-01",
+            debt_created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            due_date=datetime(2026, 1, 10, tzinfo=timezone.utc).date(),
+            charge_type=ChargeType.fee,
+            status=ChargeStatus.unpaid,
+        ),
+        Charge(
+            school_id=school.id,
+            student_id=student.id,
+            invoice_id=None,
+            fee_definition_id=None,
+            origin_charge_id=None,
+            description="Credit",
+            amount=Decimal("-20.00"),
+            period="2026-01",
+            debt_created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            due_date=datetime(2026, 1, 10, tzinfo=timezone.utc).date(),
+            charge_type=ChargeType.penalty,
+            status=ChargeStatus.unpaid,
+        ),
     )
     create_payment(
         db_session,
@@ -91,7 +90,6 @@ def test_get_student_balance_snapshot_computes_and_caches_when_missing(db_sessio
         amount="30.00",
         paid_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
     )
-    db_session.commit()
 
     captured = {"key": None, "value": None, "ttl": None}
     monkeypatch.setattr("app.application.services.student_balance_service.get_json", lambda _key: None)

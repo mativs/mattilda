@@ -3,6 +3,7 @@ from datetime import date
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
 from tests.end2end.helpers_tc import create_open_invoice_with_charges, get_invoice_charges, setup_tc_context
+from tests.helpers.factories import refresh_entity
 
 
 def test_tc_01_full_payment_on_time(client, db_session, seeded_users):
@@ -37,5 +38,5 @@ def test_tc_01_full_payment_on_time(client, db_session, seeded_users):
     assert response.status_code == 201
     charges = get_invoice_charges(db_session, invoice_id=invoice.id)
     assert charges[0].status == ChargeStatus.paid
-    db_session.refresh(invoice)
+    refresh_entity(db_session, invoice)
     assert invoice.status == InvoiceStatus.closed

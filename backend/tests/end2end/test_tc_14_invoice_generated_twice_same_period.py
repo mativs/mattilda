@@ -1,12 +1,10 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select
-
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
-from app.infrastructure.db.models import Charge, Invoice, InvoiceItem
+from app.infrastructure.db.models import Invoice
 from tests.end2end.helpers_tc import setup_tc_context
-from tests.helpers.factories import create_charge
+from tests.helpers.factories import create_charge, get_entity_by_id, list_charges_for_student, list_invoice_items_for_invoice
 
 
 def test_tc_14_invoice_generated_twice_same_period(client, db_session, seeded_users):
@@ -39,12 +37,12 @@ def test_tc_14_invoice_generated_twice_same_period(client, db_session, seeded_us
     second_id = second.json()["id"]
     assert second_id != first_id
 
-    inv1 = db_session.get(Invoice, first_id)
-    inv2 = db_session.get(Invoice, second_id)
+    inv1 = get_entity_by_id(db_session, Invoice, first_id)
+    inv2 = get_entity_by_id(db_session, Invoice, second_id)
     assert inv1 is not None and inv1.status == InvoiceStatus.closed
     assert inv2 is not None and inv2.status == InvoiceStatus.open
-    items1 = list(db_session.execute(select(InvoiceItem).where(InvoiceItem.invoice_id == first_id)).scalars().all())
-    items2 = list(db_session.execute(select(InvoiceItem).where(InvoiceItem.invoice_id == second_id)).scalars().all())
+    items1 = list_invoice_items_for_invoice(db_session, invoice_id=first_id)
+    items2 = list_invoice_items_for_invoice(db_session, invoice_id=second_id)
     assert len(items1) == len(items2) == 1
-    charges = list(db_session.execute(select(Charge).where(Charge.student_id == student.id)).scalars().all())
+    charges = list_charges_for_student(db_session, student_id=student.id)
     assert all(charge.invoice_id == second_id for charge in charges if charge.status == ChargeStatus.unpaid)

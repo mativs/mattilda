@@ -1,12 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import select
-
 from app.domain.charge_enums import ChargeStatus, ChargeType
-from app.infrastructure.db.models import Charge
 from tests.end2end.helpers_tc import setup_tc_context
-from tests.helpers.factories import create_charge
+from tests.helpers.factories import create_charge, list_interest_charges_for_origin
 
 
 def test_tc_07_overdue_fee_generates_interest(client, db_session, seeded_users):
@@ -33,17 +30,7 @@ def test_tc_07_overdue_fee_generates_interest(client, db_session, seeded_users):
     )
     response = client.post(f"/api/v1/students/{student.id}/invoices/generate", headers=headers)
     assert response.status_code == 201
-    interests = list(
-        db_session.execute(
-            select(Charge).where(
-                Charge.student_id == student.id,
-                Charge.origin_charge_id == base.id,
-                Charge.charge_type == ChargeType.interest,
-            )
-        )
-        .scalars()
-        .all()
-    )
+    interests = list_interest_charges_for_origin(db_session, origin_charge_id=base.id)
     assert len(interests) == 1
     # 2% monthly with 30-day divisor and exactly 30 days overdue.
     assert interests[0].amount == Decimal("2.00")

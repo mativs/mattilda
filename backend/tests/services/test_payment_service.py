@@ -2,7 +2,6 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
 
 from app.application.errors import NotFoundError, ValidationError
 from app.domain.charge_enums import ChargeStatus, ChargeType
@@ -20,12 +19,17 @@ from app.application.services.payment_service import (
 from app.interfaces.api.v1.schemas.payment import PaymentCreate
 from tests.helpers.factories import (
     create_invoice,
+    list_from_query,
+    list_negative_unpaid_carry_for_student,
     create_payment as factory_create_payment,
     create_school,
     create_student,
     create_user,
+    get_entity_by_id,
     link_student_school,
     link_user_student,
+    persist_entities,
+    persist_entity,
 )
 
 
@@ -123,8 +127,7 @@ def test_create_payment_allocates_and_closes_invoice_when_fully_covered(db_sessi
         charge_type=ChargeType.fee,
         status=ChargeStatus.unpaid,
     )
-    db_session.add(charge)
-    db_session.commit()
+    persist_entity(db_session, charge)
     created = create_payment(
         db_session,
         school_id=school.id,
@@ -136,8 +139,8 @@ def test_create_payment_allocates_and_closes_invoice_when_fully_covered(db_sessi
             method="cash",
         ),
     )
-    refreshed_charge = db_session.get(Charge, charge.id)
-    refreshed_invoice = db_session.get(Invoice, invoice.id)
+    refreshed_charge = get_entity_by_id(db_session, Charge, charge.id)
+    refreshed_invoice = get_entity_by_id(db_session, Invoice, invoice.id)
     assert created.invoice_id == invoice.id
     assert refreshed_charge is not None and refreshed_charge.status == ChargeStatus.paid
     assert refreshed_invoice is not None and refreshed_invoice.status == InvoiceStatus.closed
@@ -305,8 +308,7 @@ def test_create_payment_marks_all_positive_charges_paid_when_fully_covered(db_se
         charge_type=ChargeType.penalty,
         status=ChargeStatus.unpaid,
     )
-    db_session.add_all([first, second])
-    db_session.commit()
+    persist_entities(db_session, first, second)
 
     create_payment(
         db_session,
@@ -319,8 +321,8 @@ def test_create_payment_marks_all_positive_charges_paid_when_fully_covered(db_se
             method="cash",
         ),
     )
-    assert db_session.get(Charge, first.id).status == ChargeStatus.paid
-    assert db_session.get(Charge, second.id).status == ChargeStatus.paid
+    assert get_entity_by_id(db_session, Charge, first.id).status == ChargeStatus.paid
+    assert get_entity_by_id(db_session, Charge, second.id).status == ChargeStatus.paid
 
 
 def test_create_payment_keeps_cutoff_charge_unpaid_and_creates_carry_credit(db_session):
@@ -359,8 +361,7 @@ def test_create_payment_keeps_cutoff_charge_unpaid_and_creates_carry_credit(db_s
         charge_type=ChargeType.fee,
         status=ChargeStatus.unpaid,
     )
-    db_session.add(source)
-    db_session.commit()
+    persist_entity(db_session, source)
 
     create_payment(
         db_session,
@@ -373,20 +374,9 @@ def test_create_payment_keeps_cutoff_charge_unpaid_and_creates_carry_credit(db_s
             method="transfer",
         ),
     )
-    refreshed_source = db_session.get(Charge, source.id)
-    refreshed_invoice = db_session.get(Invoice, invoice.id)
-    carry_credits = list(
-        db_session.execute(
-            select(Charge).where(
-                Charge.student_id == student.id,
-                Charge.invoice_id.is_(None),
-                Charge.amount < Decimal("0.00"),
-                Charge.deleted_at.is_(None),
-            )
-        )
-        .scalars()
-        .all()
-    )
+    refreshed_source = get_entity_by_id(db_session, Charge, source.id)
+    refreshed_invoice = get_entity_by_id(db_session, Invoice, invoice.id)
+    carry_credits = list_negative_unpaid_carry_for_student(db_session, student_id=student.id)
     assert refreshed_source is not None and refreshed_source.status == ChargeStatus.unpaid
     assert refreshed_invoice is not None and refreshed_invoice.status == InvoiceStatus.closed
     assert len(carry_credits) == 1
@@ -443,8 +433,7 @@ def test_create_payment_partial_flow_pays_full_lines_and_creates_carry_credit(db
         charge_type=ChargeType.penalty,
         status=ChargeStatus.unpaid,
     )
-    db_session.add_all([first, second])
-    db_session.commit()
+    persist_entities(db_session, first, second)
 
     create_payment(
         db_session,
@@ -457,21 +446,10 @@ def test_create_payment_partial_flow_pays_full_lines_and_creates_carry_credit(db
             method="transfer",
         ),
     )
-    carry_credits = list(
-        db_session.execute(
-            select(Charge).where(
-                Charge.student_id == student.id,
-                Charge.invoice_id.is_(None),
-                Charge.amount < Decimal("0.00"),
-                Charge.deleted_at.is_(None),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    refreshed_invoice = db_session.get(Invoice, invoice.id)
-    assert db_session.get(Charge, first.id).status == ChargeStatus.paid
-    assert db_session.get(Charge, second.id).status == ChargeStatus.unpaid
+    carry_credits = list_negative_unpaid_carry_for_student(db_session, student_id=student.id)
+    refreshed_invoice = get_entity_by_id(db_session, Invoice, invoice.id)
+    assert get_entity_by_id(db_session, Charge, first.id).status == ChargeStatus.paid
+    assert get_entity_by_id(db_session, Charge, second.id).status == ChargeStatus.unpaid
     assert refreshed_invoice is not None and refreshed_invoice.status == InvoiceStatus.closed
     assert len(carry_credits) == 1
     assert carry_credits[0].amount == Decimal("-10.00")
@@ -513,8 +491,7 @@ def test_create_payment_marks_negative_charges_paid(db_session):
         charge_type=ChargeType.penalty,
         status=ChargeStatus.unpaid,
     )
-    db_session.add(negative)
-    db_session.commit()
+    persist_entity(db_session, negative)
 
     create_payment(
         db_session,
@@ -527,7 +504,7 @@ def test_create_payment_marks_negative_charges_paid(db_session):
             method="cash",
         ),
     )
-    assert db_session.get(Charge, negative.id).status == ChargeStatus.paid
+    assert get_entity_by_id(db_session, Charge, negative.id).status == ChargeStatus.paid
 
 
 def test_create_payment_partial_flow_hits_zero_remaining_break(db_session):
@@ -580,8 +557,7 @@ def test_create_payment_partial_flow_hits_zero_remaining_break(db_session):
         charge_type=ChargeType.penalty,
         status=ChargeStatus.unpaid,
     )
-    db_session.add_all([first, second])
-    db_session.commit()
+    persist_entities(db_session, first, second)
 
     create_payment(
         db_session,
@@ -594,21 +570,10 @@ def test_create_payment_partial_flow_hits_zero_remaining_break(db_session):
             method="transfer",
         ),
     )
-    refreshed_invoice = db_session.get(Invoice, invoice.id)
-    carry_credits = list(
-        db_session.execute(
-            select(Charge).where(
-                Charge.student_id == student.id,
-                Charge.invoice_id.is_(None),
-                Charge.amount < Decimal("0.00"),
-                Charge.deleted_at.is_(None),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert db_session.get(Charge, first.id).status == ChargeStatus.paid
-    assert db_session.get(Charge, second.id).status == ChargeStatus.unpaid
+    refreshed_invoice = get_entity_by_id(db_session, Invoice, invoice.id)
+    carry_credits = list_negative_unpaid_carry_for_student(db_session, student_id=student.id)
+    assert get_entity_by_id(db_session, Charge, first.id).status == ChargeStatus.paid
+    assert get_entity_by_id(db_session, Charge, second.id).status == ChargeStatus.unpaid
     assert refreshed_invoice is not None and refreshed_invoice.status == InvoiceStatus.closed
     assert carry_credits == []
 
@@ -698,7 +663,7 @@ def test_build_visible_payments_query_and_serialize_response(db_session):
         user_id=0,
         is_admin=True,
     )
-    rows = list(db_session.execute(query).scalars().all())
+    rows = list_from_query(db_session, query)
     payload = serialize_payment_response(rows[0])
     assert payload["student"]["id"] == student.id
     assert payload["invoice"]["id"] == invoice.id

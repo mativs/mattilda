@@ -1,12 +1,10 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
-
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
-from app.infrastructure.db.models import Charge
 from tests.end2end.helpers_tc import create_open_invoice_with_charges, setup_tc_context
+from tests.helpers.factories import list_charges_for_student, list_negative_unpaid_carry_for_student, refresh_entity
 
 
 def test_tc_05_partial_payment_multiple_charges(client, db_session, seeded_users):
@@ -43,10 +41,10 @@ def test_tc_05_partial_payment_multiple_charges(client, db_session, seeded_users
         },
     )
     assert response.status_code == 201
-    db_session.refresh(invoice)
+    refresh_entity(db_session, invoice)
     assert invoice.status == InvoiceStatus.closed
-    all_charges = list(db_session.execute(select(Charge).where(Charge.student_id == student.id)).scalars().all())
-    carry_credit = next(charge for charge in all_charges if charge.invoice_id is None and charge.amount < Decimal("0.00"))
+    all_charges = list_charges_for_student(db_session, student_id=student.id)
+    carry_credit = list_negative_unpaid_carry_for_student(db_session, student_id=student.id)[0]
     source_by_id = {charge.id: charge for charge in all_charges if charge.id in [item.id for item in charges]}
     assert source_by_id[charges[0].id].status == ChargeStatus.paid
     assert source_by_id[charges[1].id].status == ChargeStatus.unpaid

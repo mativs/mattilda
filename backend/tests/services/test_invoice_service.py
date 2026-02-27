@@ -16,6 +16,7 @@ from tests.helpers.factories import (
     create_school,
     create_student,
     create_user,
+    list_from_query,
     link_student_school,
     link_user_student,
 )
@@ -108,7 +109,7 @@ def test_build_visible_invoices_query_for_student_filters_non_admin_results(db_s
         user_id=user.id,
         is_admin=False,
     )
-    rows = list(db_session.execute(query).scalars().all())
+    rows = list_from_query(db_session, query)
     assert len(rows) == 1
     assert rows[0].student_id == student_a.id
 

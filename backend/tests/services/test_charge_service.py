@@ -19,7 +19,7 @@ from app.domain.fee_recurrence import FeeRecurrence
 from app.infrastructure.db.models import FeeDefinition
 from app.interfaces.api.v1.schemas.charge import ChargeCreate, ChargeUpdate
 from tests.helpers.factories import create_charge as factory_create_charge
-from tests.helpers.factories import create_school, create_student, link_student_school
+from tests.helpers.factories import create_school, create_student, link_student_school, persist_entity
 
 
 def test_get_student_in_school_returns_student_for_valid_link(db_session):
@@ -205,9 +205,7 @@ def test_update_charge_updates_all_mutable_fields(db_session):
         recurrence=FeeRecurrence.monthly,
         is_active=True,
     )
-    db_session.add(fee)
-    db_session.commit()
-    db_session.refresh(fee)
+    persist_entity(db_session, fee)
     charge = factory_create_charge(
         db_session,
         school_id=school.id,

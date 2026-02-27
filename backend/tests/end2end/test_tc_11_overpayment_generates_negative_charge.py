@@ -1,12 +1,10 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
-
-from app.domain.charge_enums import ChargeStatus, ChargeType
+from app.domain.charge_enums import ChargeType
 from app.domain.invoice_status import InvoiceStatus
-from app.infrastructure.db.models import Charge
 from tests.end2end.helpers_tc import create_open_invoice_with_charges, setup_tc_context
+from tests.helpers.factories import list_negative_unpaid_carry_for_student, refresh_entity
 
 
 def test_tc_11_overpayment_generates_negative_charge(client, db_session, seeded_users):
@@ -39,19 +37,8 @@ def test_tc_11_overpayment_generates_negative_charge(client, db_session, seeded_
         },
     )
     assert response.status_code == 201
-    db_session.refresh(invoice)
+    refresh_entity(db_session, invoice)
     assert invoice.status == InvoiceStatus.closed
-    negative = list(
-        db_session.execute(
-            select(Charge).where(
-                Charge.student_id == student.id,
-                Charge.invoice_id.is_(None),
-                Charge.amount < Decimal("0.00"),
-                Charge.status == ChargeStatus.unpaid,
-            )
-        )
-        .scalars()
-        .all()
-    )
+    negative = list_negative_unpaid_carry_for_student(db_session, student_id=student.id)
     assert len(negative) == 1
     assert negative[0].amount == Decimal("-20.00")

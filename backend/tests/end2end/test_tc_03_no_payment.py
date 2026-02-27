@@ -3,6 +3,7 @@ from datetime import date
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
 from tests.end2end.helpers_tc import create_open_invoice_with_charges, get_invoice_charges, setup_tc_context
+from tests.helpers.factories import refresh_entity
 
 
 def test_tc_03_no_payment(client, db_session, seeded_users):
@@ -25,7 +26,7 @@ def test_tc_03_no_payment(client, db_session, seeded_users):
     )
     response = client.get(f"/api/v1/invoices/{invoice.id}", headers=headers)
     assert response.status_code == 200
-    db_session.refresh(invoice)
+    refresh_entity(db_session, invoice)
     assert invoice.status == InvoiceStatus.open
     charges = get_invoice_charges(db_session, invoice_id=invoice.id)
     assert charges[0].status == ChargeStatus.unpaid

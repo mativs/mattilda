@@ -7,14 +7,21 @@ from app.application.services.reconciliation_service import (
     create_queued_reconciliation_run,
     execute_reconciliation_run,
     get_reconciliation_run_with_findings,
-    list_reconciliation_runs_query,
     mark_reconciliation_run_failed,
     run_school_reconciliation,
     serialize_reconciliation_finding,
     serialize_reconciliation_run,
 )
 from app.domain.invoice_status import InvoiceStatus
-from tests.helpers.factories import create_invoice, create_payment, create_school, create_student, create_user, link_student_school
+from tests.helpers.factories import (
+    create_invoice,
+    create_payment,
+    create_school,
+    create_student,
+    create_user,
+    link_student_school,
+    list_reconciliation_runs,
+)
 
 
 def test_run_school_reconciliation_persists_run_and_findings(db_session):
@@ -129,7 +136,7 @@ def test_serialize_helpers_and_list_query_return_expected_payloads(db_session):
 
     school = create_school(db_session, "Recon Serialize", "recon-serialize")
     run = create_queued_reconciliation_run(db_session, school_id=school.id)
-    run_rows = list(db_session.execute(list_reconciliation_runs_query(school_id=school.id)).scalars().all())
+    run_rows = list_reconciliation_runs(db_session, school_id=school.id)
     run_payload = serialize_reconciliation_run(run_rows[0])
     assert run_payload["id"] == run.id
     assert run_payload["status"] == "queued"

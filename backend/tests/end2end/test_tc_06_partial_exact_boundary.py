@@ -1,11 +1,9 @@
 from datetime import date
 
-from sqlalchemy import select
-
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
-from app.infrastructure.db.models import Charge
 from tests.end2end.helpers_tc import create_open_invoice_with_charges, setup_tc_context
+from tests.helpers.factories import list_charges_for_invoice, list_charges_for_student, refresh_entity
 
 
 def test_tc_06_payment_exact_boundary(client, db_session, seeded_users):
@@ -41,10 +39,10 @@ def test_tc_06_payment_exact_boundary(client, db_session, seeded_users):
         },
     )
     assert response.status_code == 201
-    db_session.refresh(invoice)
+    refresh_entity(db_session, invoice)
     assert invoice.status == InvoiceStatus.closed
-    updated = list(db_session.execute(select(Charge).where(Charge.invoice_id == invoice.id).order_by(Charge.id)).scalars().all())
-    all_student_charges = list(db_session.execute(select(Charge).where(Charge.student_id == student.id)).scalars().all())
+    updated = sorted(list_charges_for_invoice(db_session, invoice_id=invoice.id), key=lambda charge: charge.id)
+    all_student_charges = list_charges_for_student(db_session, student_id=student.id)
     assert updated[0].status == ChargeStatus.paid
     assert updated[1].status == ChargeStatus.unpaid
     assert not any(charge.origin_charge_id is not None for charge in updated)

@@ -14,7 +14,7 @@ from app.interfaces.api.v1.schemas.user import UserCreate, UserProfileCreate, Us
 from tests.helpers.factories import create_student as factory_create_student
 from tests.helpers.factories import create_school, add_membership
 from tests.helpers.factories import create_user as factory_create_user
-from tests.helpers.factories import link_student_school, link_user_student
+from tests.helpers.factories import commit_session, link_student_school, link_user_student
 from app.domain.roles import UserRole
 
 
@@ -142,7 +142,7 @@ def test_get_user_by_id_returns_none_for_soft_deleted_user(db_session):
     """
     user = factory_create_user(db_session, email="hidden@example.com")
     user.deleted_at = datetime.now(timezone.utc)
-    db_session.commit()
+    commit_session(db_session)
     assert get_user_by_id(db_session, user.id) is None
 
 
@@ -176,7 +176,7 @@ def test_serialize_user_response_excludes_soft_deleted_students(db_session, seed
     link_student_school(db_session, student.id, seeded_users["north_school"].id)
     link_user_student(db_session, seeded_users["student"].id, student.id)
     student.deleted_at = datetime.now(timezone.utc)
-    db_session.commit()
+    commit_session(db_session)
     serialized = serialize_user_response(seeded_users["student"])
     assert all(item["id"] != student.id for item in serialized["students"])
 

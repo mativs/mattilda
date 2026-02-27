@@ -4,6 +4,7 @@ from decimal import Decimal
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
 from tests.end2end.helpers_tc import create_open_invoice_with_charges, setup_tc_context
+from tests.helpers.factories import refresh_entity
 
 
 def test_tc_04_simple_partial_payment(client, db_session, seeded_users):
@@ -37,7 +38,7 @@ def test_tc_04_simple_partial_payment(client, db_session, seeded_users):
         },
     )
     assert response.status_code == 201
-    db_session.refresh(invoice)
+    refresh_entity(db_session, invoice)
     assert invoice.status == InvoiceStatus.closed
     all_charges = list(student.charges)
     source = next(charge for charge in all_charges if charge.id == source_charge_id)

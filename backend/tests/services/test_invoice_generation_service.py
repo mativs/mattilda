@@ -8,7 +8,17 @@ from app.application.services.invoice_generation_service import generate_invoice
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
 from app.infrastructure.db.models import Charge, Invoice
-from tests.helpers.factories import create_invoice, create_school, create_student, link_student_school
+from tests.helpers.factories import (
+    create_charge,
+    create_invoice,
+    create_school,
+    create_student,
+    get_entity_by_id,
+    list_interest_charges_for_origin,
+    list_interest_charges_for_student,
+    link_student_school,
+    persist_entity,
+)
 
 
 def test_generate_invoice_closes_existing_open_and_creates_new_invoice(db_session):
@@ -33,7 +43,8 @@ def test_generate_invoice_closes_existing_open_and_creates_new_invoice(db_sessio
         total_amount="50.00",
         status=InvoiceStatus.open,
     )
-    db_session.add(
+    persist_entity(
+        db_session,
         Charge(
             school_id=school.id,
             student_id=student.id,
@@ -47,9 +58,8 @@ def test_generate_invoice_closes_existing_open_and_creates_new_invoice(db_sessio
             due_date=date(2026, 4, 15),
             charge_type=ChargeType.fee,
             status=ChargeStatus.unpaid,
-        )
+        ),
     )
-    db_session.commit()
 
     generated = generate_invoice_for_student(
         db=db_session,
@@ -57,7 +67,7 @@ def test_generate_invoice_closes_existing_open_and_creates_new_invoice(db_sessio
         student_id=student.id,
         as_of=date(2026, 4, 20),
     )
-    old = db_session.get(Invoice, previous_open.id)
+    old = get_entity_by_id(db_session, Invoice, previous_open.id)
     assert old is not None and old.status == InvoiceStatus.closed
     assert generated.status == InvoiceStatus.open
     assert generated.total_amount == Decimal("75.25")
@@ -75,39 +85,31 @@ def test_generate_invoice_creates_interest_delta_for_overdue_fee_only(db_session
     school = create_school(db_session, "North Int", "north-int")
     student = create_student(db_session, "Interest", "Student", "INV-GEN-002")
     link_student_school(db_session, student.id, school.id)
-    base = Charge(
+    base = create_charge(
+        db_session,
         school_id=school.id,
         student_id=student.id,
-        invoice_id=None,
-        fee_definition_id=None,
-        origin_charge_id=None,
         description="Monthly fee",
-        amount=Decimal("100.00"),
-        period="2026-01",
-        debt_created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        amount="100.00",
         due_date=date(2026, 1, 10),
         charge_type=ChargeType.fee,
         status=ChargeStatus.unpaid,
+        period="2026-01",
+        debt_created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
-    db_session.add(base)
-    db_session.flush()
-    db_session.add(
-        Charge(
-            school_id=school.id,
-            student_id=student.id,
-            invoice_id=None,
-            fee_definition_id=None,
-            origin_charge_id=base.id,
-            description="Existing interest",
-            amount=Decimal("2.00"),
-            period="2026-01",
-            debt_created_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
-            due_date=date(2026, 2, 1),
-            charge_type=ChargeType.interest,
-            status=ChargeStatus.unpaid,
-        )
+    create_charge(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        description="Existing interest",
+        amount="2.00",
+        due_date=date(2026, 2, 1),
+        charge_type=ChargeType.interest,
+        status=ChargeStatus.unpaid,
+        period="2026-01",
+        debt_created_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        origin_charge_id=base.id,
     )
-    db_session.commit()
 
     generate_invoice_for_student(
         db=db_session,
@@ -115,15 +117,7 @@ def test_generate_invoice_creates_interest_delta_for_overdue_fee_only(db_session
         student_id=student.id,
         as_of=date(2026, 3, 11),
     )
-    interests = list(
-        db_session.query(Charge)
-        .filter(
-            Charge.origin_charge_id == base.id,
-            Charge.charge_type == ChargeType.interest,
-            Charge.deleted_at.is_(None),
-        )
-        .all()
-    )
+    interests = list_interest_charges_for_origin(db_session, origin_charge_id=base.id)
     assert len(interests) >= 2
     assert sum((charge.amount for charge in interests), Decimal("0.00")) > Decimal("2.00")
 
@@ -157,7 +151,8 @@ def test_generate_invoice_skips_interest_for_non_overdue_fee(db_session):
     school = create_school(db_session, "North No Int", "north-no-int")
     student = create_student(db_session, "No", "Interest", "INV-GEN-004")
     link_student_school(db_session, student.id, school.id)
-    db_session.add(
+    persist_entity(
+        db_session,
         Charge(
             school_id=school.id,
             student_id=student.id,
@@ -171,21 +166,11 @@ def test_generate_invoice_skips_interest_for_non_overdue_fee(db_session):
             due_date=date(2026, 6, 10),
             charge_type=ChargeType.fee,
             status=ChargeStatus.unpaid,
-        )
+        ),
     )
-    db_session.commit()
 
     generate_invoice_for_student(db=db_session, school_id=school.id, student_id=student.id, as_of=date(2026, 6, 10))
-    interests = list(
-        db_session.query(Charge)
-        .filter(
-            Charge.school_id == school.id,
-            Charge.student_id == student.id,
-            Charge.charge_type == ChargeType.interest,
-            Charge.deleted_at.is_(None),
-        )
-        .all()
-    )
+    interests = list_interest_charges_for_student(db_session, student_id=student.id)
     assert len(interests) == 0
 
 
@@ -201,48 +186,32 @@ def test_generate_invoice_skips_interest_when_delta_is_not_positive(db_session):
     school = create_school(db_session, "North Delta", "north-delta")
     student = create_student(db_session, "Delta", "Student", "INV-GEN-005")
     link_student_school(db_session, student.id, school.id)
-    base = Charge(
+    base = create_charge(
+        db_session,
         school_id=school.id,
         student_id=student.id,
-        invoice_id=None,
-        fee_definition_id=None,
-        origin_charge_id=None,
         description="Base overdue fee",
-        amount=Decimal("100.00"),
-        period="2026-01",
-        debt_created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        amount="100.00",
         due_date=date(2026, 1, 10),
         charge_type=ChargeType.fee,
         status=ChargeStatus.unpaid,
+        period="2026-01",
+        debt_created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
-    db_session.add(base)
-    db_session.flush()
-    db_session.add(
-        Charge(
-            school_id=school.id,
-            student_id=student.id,
-            invoice_id=None,
-            fee_definition_id=None,
-            origin_charge_id=base.id,
-            description="Pre-existing high interest",
-            amount=Decimal("50.00"),
-            period="2026-01",
-            debt_created_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
-            due_date=date(2026, 2, 1),
-            charge_type=ChargeType.interest,
-            status=ChargeStatus.unpaid,
-        )
+    create_charge(
+        db_session,
+        school_id=school.id,
+        student_id=student.id,
+        description="Pre-existing high interest",
+        amount="50.00",
+        due_date=date(2026, 2, 1),
+        charge_type=ChargeType.interest,
+        status=ChargeStatus.unpaid,
+        period="2026-01",
+        debt_created_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        origin_charge_id=base.id,
     )
-    db_session.commit()
 
     generate_invoice_for_student(db=db_session, school_id=school.id, student_id=student.id, as_of=date(2026, 3, 11))
-    interests = list(
-        db_session.query(Charge)
-        .filter(
-            Charge.origin_charge_id == base.id,
-            Charge.charge_type == ChargeType.interest,
-            Charge.deleted_at.is_(None),
-        )
-        .all()
-    )
+    interests = list_interest_charges_for_origin(db_session, origin_charge_id=base.id)
     assert len(interests) == 1

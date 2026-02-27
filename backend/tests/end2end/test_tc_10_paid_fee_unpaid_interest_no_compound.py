@@ -1,12 +1,15 @@
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
-
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
-from app.infrastructure.db.models import Charge
 from tests.end2end.helpers_tc import setup_tc_context
-from tests.helpers.factories import create_charge, create_invoice, create_payment
+from tests.helpers.factories import (
+    commit_session,
+    create_charge,
+    create_invoice,
+    create_payment,
+    list_interest_charges_for_student,
+)
 
 
 def test_tc_10_paid_fee_unpaid_interest_no_compound(client, db_session, seeded_users):
@@ -42,7 +45,7 @@ def test_tc_10_paid_fee_unpaid_interest_no_compound(client, db_session, seeded_u
         status=InvoiceStatus.closed,
     )
     fee_charge.invoice_id = fee_invoice.id
-    db_session.commit()
+    commit_session(db_session)
     create_payment(
         db_session,
         school_id=school.id,
@@ -66,11 +69,5 @@ def test_tc_10_paid_fee_unpaid_interest_no_compound(client, db_session, seeded_u
     )
     response = client.post(f"/api/v1/students/{student.id}/invoices/generate", headers=headers)
     assert response.status_code == 201
-    interests = list(
-        db_session.execute(
-            select(Charge).where(Charge.student_id == student.id, Charge.charge_type == ChargeType.interest)
-        )
-        .scalars()
-        .all()
-    )
+    interests = list_interest_charges_for_student(db_session, student_id=student.id)
     assert len(interests) == 1

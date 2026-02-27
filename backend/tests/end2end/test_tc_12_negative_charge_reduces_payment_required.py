@@ -1,11 +1,9 @@
 from datetime import date
 
-from sqlalchemy import select
-
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
-from app.infrastructure.db.models import Charge
 from tests.end2end.helpers_tc import create_open_invoice_with_charges, setup_tc_context
+from tests.helpers.factories import get_negative_charge_for_invoice, refresh_entity
 
 
 def test_tc_12_negative_charge_reduces_payment_required(client, db_session, seeded_users):
@@ -41,9 +39,7 @@ def test_tc_12_negative_charge_reduces_payment_required(client, db_session, seed
         },
     )
     assert response.status_code == 201
-    db_session.refresh(invoice)
+    refresh_entity(db_session, invoice)
     assert invoice.status == InvoiceStatus.closed
-    negative = db_session.execute(
-        select(Charge).where(Charge.invoice_id == invoice.id, Charge.amount < 0, Charge.deleted_at.is_(None))
-    ).scalar_one()
+    negative = get_negative_charge_for_invoice(db_session, invoice_id=invoice.id)
     assert negative.status == ChargeStatus.paid

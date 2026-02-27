@@ -1,5 +1,5 @@
 from tests.helpers.auth import auth_header, school_header, token_for_user
-from tests.helpers.factories import add_membership, create_school, create_user
+from tests.helpers.factories import add_membership, commit_session, create_school, create_user
 from app.domain.roles import UserRole
 
 
@@ -76,7 +76,7 @@ def test_get_users_applies_search_on_email_and_profile(client, seeded_users, db_
     non_matching = create_user(db_session, "other-user@example.com")
     add_membership(db_session, matching.id, seeded_users["north_school"].id, UserRole.teacher)
     add_membership(db_session, non_matching.id, seeded_users["north_school"].id, UserRole.teacher)
-    db_session.commit()
+    commit_session(db_session)
     response = client.get(
         "/api/v1/users?search=needle",
         headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),

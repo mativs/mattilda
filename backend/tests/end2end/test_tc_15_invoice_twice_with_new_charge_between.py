@@ -1,12 +1,10 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select
-
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
-from app.infrastructure.db.models import Invoice, InvoiceItem
+from app.infrastructure.db.models import Invoice
 from tests.end2end.helpers_tc import setup_tc_context
-from tests.helpers.factories import create_charge
+from tests.helpers.factories import create_charge, get_entity_by_id, list_invoice_items_for_invoice
 
 
 def test_tc_15_invoice_generated_twice_with_charge_between(client, db_session, seeded_users):
@@ -51,9 +49,9 @@ def test_tc_15_invoice_generated_twice_with_charge_between(client, db_session, s
     second_id = second.json()["id"]
     assert second_id != first_id
 
-    inv1 = db_session.get(Invoice, first_id)
-    inv2 = db_session.get(Invoice, second_id)
+    inv1 = get_entity_by_id(db_session, Invoice, first_id)
+    inv2 = get_entity_by_id(db_session, Invoice, second_id)
     assert inv1 is not None and inv1.status == InvoiceStatus.closed
     assert inv2 is not None and inv2.status == InvoiceStatus.open
-    items2 = list(db_session.execute(select(InvoiceItem).where(InvoiceItem.invoice_id == second_id)).scalars().all())
+    items2 = list_invoice_items_for_invoice(db_session, invoice_id=second_id)
     assert len(items2) == 2

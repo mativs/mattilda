@@ -1,4 +1,5 @@
 from tests.helpers.auth import auth_header, token_for_user
+from tests.helpers.factories import commit_session
 
 
 def test_issue_token_returns_200_for_valid_credentials(client, seeded_users):
@@ -76,6 +77,6 @@ def test_me_returns_401_for_inactive_user_token(client, db_session, seeded_users
     4. Validate inactive users cannot authenticate.
     """
     seeded_users["student"].is_active = False
-    db_session.commit()
+    commit_session(db_session)
     response = client.get("/api/v1/users/me", headers=auth_header(token_for_user(seeded_users["student"].id)))
     assert response.status_code == 401

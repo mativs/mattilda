@@ -19,6 +19,7 @@ from app.domain.roles import UserRole
 from app.interfaces.api.v1.schemas.school import SchoolCreate, SchoolMemberAssignment, SchoolUpdate
 from tests.helpers.factories import (
     add_membership,
+    commit_session,
     create_invoice,
     create_payment,
     create_school as factory_create_school,
@@ -235,7 +236,7 @@ def test_serialize_school_response_skips_soft_deleted_member_user(db_session):
     school = factory_create_school(db_session, "Filtered School", "filtered-school")
     add_membership(db_session, user.id, school.id, UserRole.teacher)
     user.deleted_at = user.created_at
-    db_session.commit()
+    commit_session(db_session)
     serialized = serialize_school_response(school)
     assert all(member["user_id"] != user.id for member in serialized["members"])
 
