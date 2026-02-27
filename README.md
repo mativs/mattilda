@@ -4,20 +4,26 @@
 
 Starter environment for a take-home exercise with:
 
-- Backend: Python + FastAPI + Celery
-- Database: PostgreSQL + SQLAlchemy ORM
-- Cache: Redis
-- Frontend: React (Vite)
-- Containers: Docker + Docker Compose
-- Python dependency management: `uv` + `pyproject.toml`
-- Tests: `pytest` for backend
-- API docs: OpenAPI/Swagger via FastAPI
-- Directory style: Hexagonal architecture-inspired layering
-- Multi-tenant model: School-based isolation with PostgreSQL RLS
-- Student model: many-to-many user/student and student/school associations
-- Charge/Payment/Invoice model: only one invoice open for student
-- Invoice Generator process
-- Conciliation proccess
+- Backend in Python with FastAPI, SQLAlchemy, PostgreSQL, Redis, and Celery workers.
+- Frontend in React (Vite) with role-aware navigation and billing-focused admin workflows.
+- Hexagonal-inspired architecture (`domain`, `application`, `infrastructure`, `interfaces`) for clear boundaries.
+- Multi-tenant school isolation at app layer plus PostgreSQL Row-Level Security (RLS) safety net.
+- School-scoped RBAC with per-school roles (`admin`, `teacher`, `student`, etc.) and visibility enforcement.
+- JWT authentication with OAuth2 bearer flow and tenant context via `X-School-Id`.
+- Core financial domain model: Fee definitions, Charges, Invoices/InvoiceItems, Payments, and Reconciliation logs.
+- Soft-delete strategy on critical entities for auditability and historical consistency.
+- Invoice model treated as immutable financial document with snapshot line items.
+- Controlled invoice lifecycle (read-focused API + explicit generation/closure business flows).
+- Invoice generation rules include overdue fee interest deltas and non-compounding interest behavior.
+- Payment allocation rules support full/partial/overpayment flows with deterministic ordering and carry credits.
+- School-level and student-level financial summary endpoints for debt, paid totals, billed totals, and pending balances.
+- Reconciliation engine with persisted runs/findings to detect accounting anomalies and workflow drift.
+- Asynchronous school-wide jobs (invoice generation and reconciliation) executed through Celery + Redis.
+- Reusable caching and invalidation for student balance snapshots.
+- Redis-based short-lived payment lock to prevent duplicate payment submission races.
+- Structured logging (`structlog`) with contextual fields for debugging and operational analysis.
+- API ergonomics with OpenAPI/ReDoc documentation, pagination/search patterns, and standardized responses.
+- High-quality automated testing strategy (service, endpoint, end2end) with enforced 100% coverage gates.
 
 ## Live links
 
