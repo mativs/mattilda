@@ -2,7 +2,7 @@
 
 Starter environment for a take-home exercise with:
 
-- Backend: Python + FastAPI
+- Backend: Python + FastAPI + Celery
 - Database: PostgreSQL + SQLAlchemy ORM
 - Cache: Redis
 - Frontend: React (Vite)
@@ -13,6 +13,7 @@ Starter environment for a take-home exercise with:
 - Directory style: Hexagonal architecture-inspired layering
 - Multi-tenant model: School-based isolation with PostgreSQL RLS
 - Student model: many-to-many user/student and student/school associations
+- Charge/Payment/Invoice model: only one invoice open for student
 
 ## Project structure
 
