@@ -31,6 +31,28 @@ function formatCurrency(value) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(numeric);
 }
 
+function formatDate(value) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(`${String(value).slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toLocaleDateString("en-US");
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toLocaleString("en-US");
+}
+
 function isInvoiceOverdue(invoice) {
   if (!invoice?.due_date) {
     return false;
@@ -202,9 +224,15 @@ function DashboardPage({ activeSchool, isSchoolAdmin, schoolFinancialSummary, re
             <tbody>
               {items.map((item) => (
                 <tr key={`${item.invoice_id}-${item.student_id}`}>
-                  <td>{item.student_name}</td>
                   <td>
-                    #{item.invoice_id} - {item.period}
+                    <NavLink className="dashboard-link" to={`/students/${item.student_id}`}>
+                      {item.student_name}
+                    </NavLink>
+                  </td>
+                  <td>
+                    <NavLink className="dashboard-link" to={`/students/${item.student_id}/billing/${item.invoice_id}`}>
+                      #{item.invoice_id} - {item.period}
+                    </NavLink>
                   </td>
                   <td>{item.due_date}</td>
                   <td>{formatCurrency(item.pending_amount)}</td>
@@ -401,6 +429,16 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
     ]);
   }
 
+  async function triggerStudentInvoiceGeneration() {
+    try {
+      setError("");
+      await request(`/api/v1/students/${studentId}/invoices/generate`, { method: "POST" });
+      await refreshStudentDashboardData();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   useEffect(() => {
     async function loadStudentDashboard() {
       if (!selectedSchoolId || !studentId) {
@@ -532,6 +570,11 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
             >
               Pay
             </button>
+            {isSchoolAdmin && (
+              <button className="ghost" onClick={triggerStudentInvoiceGeneration} type="button">
+                Generate Invoice
+              </button>
+            )}
           </div>
           {!openInvoice && <p className="muted">There is no open invoice</p>}
           {openInvoice && payButtonDisabledReason && <p className="muted">{payButtonDisabledReason}</p>}
@@ -623,23 +666,6 @@ function StudentDetailPage({ selectedSchoolId, request, isSchoolAdmin }) {
                 value={invoiceSearch}
                 onChange={(event) => setInvoiceSearch(event.target.value)}
               />
-              {isSchoolAdmin && (
-                <button
-                  className="ghost"
-                  onClick={async () => {
-                    try {
-                      setError("");
-                      await request(`/api/v1/students/${studentId}/invoices/generate`, { method: "POST" });
-                      await refreshStudentDashboardData();
-                    } catch (err) {
-                      setError(err.message);
-                    }
-                  }}
-                  type="button"
-                >
-                  Generate Invoice
-                </button>
-              )}
             </div>
             <table>
               <thead>
@@ -990,30 +1016,69 @@ function InvoiceDetailPage({ selectedSchoolId, request }) {
       {error && <p className="error">{error}</p>}
       {invoice && (
         <>
-          <div className="kv-grid">
-            <div>
-              <span className="muted">Invoice</span>
-              <p>#{invoice.id}</p>
+          <div className="invoice-sheet">
+            <div className="invoice-header">
+              <div>
+                <h3>Invoice #{invoice.id}</h3>
+                <p className="muted">Mattilda School Billing</p>
+              </div>
+              <span className="invoice-status">{invoice.status}</span>
             </div>
-            <div>
-              <span className="muted">Period</span>
-              <p>{invoice.period}</p>
+            <div className="invoice-meta-grid">
+              <div>
+                <span className="muted">Student</span>
+                <p>#{invoice.student_id}</p>
+              </div>
+              <div>
+                <span className="muted">Period</span>
+                <p>{invoice.period}</p>
+              </div>
+              <div>
+                <span className="muted">Issued</span>
+                <p>{formatDateTime(invoice.issued_at)}</p>
+              </div>
+              <div>
+                <span className="muted">Due</span>
+                <p>{formatDate(invoice.due_date)}</p>
+              </div>
+              <div>
+                <span className="muted">Total</span>
+                <p>{formatCurrency(invoice.total_amount)}</p>
+              </div>
             </div>
-            <div>
-              <span className="muted">Issued</span>
-              <p>{invoice.issued_at}</p>
-            </div>
-            <div>
-              <span className="muted">Due</span>
-              <p>{invoice.due_date}</p>
-            </div>
-            <div>
-              <span className="muted">Total</span>
-              <p>{formatCurrency(invoice.total_amount)}</p>
-            </div>
-            <div>
-              <span className="muted">Status</span>
-              <p>{invoice.status}</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Description</th>
+                  <th>Type</th>
+                  <th>Qty</th>
+                  <th>Unit</th>
+                  <th>Line total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoice.items.map((item, index) => (
+                  <tr key={item.id}>
+                    <td>{index + 1}</td>
+                    <td>{item.description}</td>
+                    <td>{item.charge_type}</td>
+                    <td>1</td>
+                    <td>{formatCurrency(item.amount)}</td>
+                    <td>{formatCurrency(item.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="invoice-totals">
+              <div>
+                <span className="muted">Subtotal</span>
+                <p>{formatCurrency(invoice.total_amount)}</p>
+              </div>
+              <div>
+                <span className="muted">Total</span>
+                <p>{formatCurrency(invoice.total_amount)}</p>
+              </div>
             </div>
           </div>
           <div className="row-actions">
@@ -1040,26 +1105,6 @@ function InvoiceDetailPage({ selectedSchoolId, request }) {
             </button>
           </div>
           {payDisabledReason && <p className="muted">{payDisabledReason}</p>}
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Description</th>
-                <th>Type</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invoice.items.map((item) => (
-                <tr key={item.id}>
-                  <td>{item.id}</td>
-                  <td>{item.description}</td>
-                  <td>{item.charge_type}</td>
-                  <td>{formatCurrency(item.amount)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </>
       )}
       {payModalOpen && invoice && (
@@ -3337,6 +3382,7 @@ function AppLayout({
 
 export default function App() {
   const navigate = useNavigate();
+  const location = useLocation();
   const health = usePublicHealth();
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) ?? "");
   const [selectedSchoolId, setSelectedSchoolId] = useState(() => localStorage.getItem(SCHOOL_KEY) ?? "");
@@ -3450,6 +3496,21 @@ export default function App() {
     }
     loadActiveSchool();
   }, [token, selectedSchoolId, me, isSchoolAdmin]);
+
+  useEffect(() => {
+    async function refreshDashboardSummary() {
+      if (!token || !selectedSchoolId || !isSchoolAdmin || location.pathname !== "/dashboard") {
+        return;
+      }
+      try {
+        const summaryPayload = await authenticatedRequest(`/api/v1/schools/${selectedSchoolId}/financial-summary`);
+        setSchoolFinancialSummary(summaryPayload);
+      } catch {
+        setSchoolFinancialSummary(null);
+      }
+    }
+    refreshDashboardSummary();
+  }, [location.pathname, token, selectedSchoolId, isSchoolAdmin]);
 
   async function onLogin(event) {
     event.preventDefault();
