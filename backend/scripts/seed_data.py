@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -904,90 +904,190 @@ def seed_tc_lab_fixtures(db: Session, *, admin: User) -> None:
             )
 
 
+def seed_reconciliation_lab_fixtures(db: Session, *, admin: User) -> None:
+    """
+    Seed manual reconciliation demo fixtures under reconciliation-lab school.
+
+    Triggered checks:
+    - invoice_total_mismatch
+    - interest_invalid_origin
+    - invoice_open_with_sufficient_payments
+    - duplicate_payment_window
+    """
+
+    recon_school = create_school_if_missing(db=db, name="Reconciliation Lab", slug="reconciliation-lab")
+    create_membership_if_missing(db=db, user_id=admin.id, school_id=recon_school.id, role=UserRole.admin)
+    today_anchor = date.today().replace(day=1)
+
+    mismatch_student = create_student_if_missing(
+        db=db,
+        first_name="RECON-01",
+        last_name="Mismatch",
+        external_id="RECON-01-STU",
+    )
+    associate_student_school_if_missing(db=db, student_id=mismatch_student.id, school_id=recon_school.id)
+    mismatch_period = f"{today_anchor.year:04d}-{today_anchor.month:02d}-RM"
+    mismatch_due = _month_date(today_anchor, 20)
+    mismatch_charge = create_charge_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=mismatch_student.id,
+        fee_definition_id=None,
+        description="RECON-01 charge for invoice mismatch",
+        amount=Decimal("80.00"),
+        period=mismatch_period,
+        debt_created_at=_month_datetime(today_anchor, 1),
+        due_date=mismatch_due,
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.unpaid,
+    )
+    mismatch_invoice = create_invoice_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=mismatch_student.id,
+        period=mismatch_period,
+        issued_at=_month_datetime(today_anchor, 1),
+        due_date=mismatch_due,
+        total_amount=Decimal("100.00"),
+        status=InvoiceStatus.open,
+    )
+    mismatch_charge.invoice_id = mismatch_invoice.id
+    create_invoice_item_if_missing(
+        db=db,
+        invoice_id=mismatch_invoice.id,
+        charge_id=mismatch_charge.id,
+        description=mismatch_charge.description,
+        amount=Decimal("80.00"),
+        charge_type=mismatch_charge.charge_type,
+    )
+    mismatch_invoice.total_amount = Decimal("100.00")
+
+    invalid_interest_student = create_student_if_missing(
+        db=db,
+        first_name="RECON-02",
+        last_name="InterestOrigin",
+        external_id="RECON-02-STU",
+    )
+    associate_student_school_if_missing(db=db, student_id=invalid_interest_student.id, school_id=recon_school.id)
+    invalid_interest_period = f"{today_anchor.year:04d}-{today_anchor.month:02d}-RI"
+    create_charge_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=invalid_interest_student.id,
+        fee_definition_id=None,
+        description="RECON-02 invalid interest origin",
+        amount=Decimal("10.00"),
+        period=invalid_interest_period,
+        debt_created_at=_month_datetime(today_anchor, 2),
+        due_date=_month_date(today_anchor, 18),
+        charge_type=ChargeType.interest,
+        status=ChargeStatus.unpaid,
+    )
+
+    open_paid_student = create_student_if_missing(
+        db=db,
+        first_name="RECON-03",
+        last_name="OpenPaid",
+        external_id="RECON-03-STU",
+    )
+    associate_student_school_if_missing(db=db, student_id=open_paid_student.id, school_id=recon_school.id)
+    open_paid_period = f"{today_anchor.year:04d}-{today_anchor.month:02d}-RO"
+    open_paid_due = _month_date(today_anchor, 22)
+    open_paid_charge = create_charge_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=open_paid_student.id,
+        fee_definition_id=None,
+        description="RECON-03 open invoice fully paid charge",
+        amount=Decimal("120.00"),
+        period=open_paid_period,
+        debt_created_at=_month_datetime(today_anchor, 3),
+        due_date=open_paid_due,
+        charge_type=ChargeType.fee,
+        status=ChargeStatus.unpaid,
+    )
+    open_paid_invoice = create_invoice_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=open_paid_student.id,
+        period=open_paid_period,
+        issued_at=_month_datetime(today_anchor, 3),
+        due_date=open_paid_due,
+        total_amount=Decimal("120.00"),
+        status=InvoiceStatus.open,
+    )
+    open_paid_charge.invoice_id = open_paid_invoice.id
+    create_invoice_item_if_missing(
+        db=db,
+        invoice_id=open_paid_invoice.id,
+        charge_id=open_paid_charge.id,
+        description=open_paid_charge.description,
+        amount=Decimal("120.00"),
+        charge_type=open_paid_charge.charge_type,
+    )
+    open_paid_invoice.total_amount = Decimal("120.00")
+    create_payment_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=open_paid_student.id,
+        invoice_id=open_paid_invoice.id,
+        amount=Decimal("120.00"),
+        paid_at=_month_datetime(today_anchor, 5, 10, 0),
+        method="transfer",
+    )
+
+    duplicate_student = create_student_if_missing(
+        db=db,
+        first_name="RECON-04",
+        last_name="DuplicatePayment",
+        external_id="RECON-04-STU",
+    )
+    associate_student_school_if_missing(db=db, student_id=duplicate_student.id, school_id=recon_school.id)
+    duplicate_base = _month_datetime(today_anchor, 6, 11, 0)
+    create_payment_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=duplicate_student.id,
+        invoice_id=None,
+        amount=Decimal("25.00"),
+        paid_at=duplicate_base,
+        method="card",
+    )
+    create_payment_if_missing(
+        db=db,
+        school_id=recon_school.id,
+        student_id=duplicate_student.id,
+        invoice_id=None,
+        amount=Decimal("25.00"),
+        paid_at=duplicate_base + timedelta(seconds=30),
+        method="card",
+    )
+
+
 def main() -> None:
     db = SessionLocal()
     try:
-        north_school = create_school_if_missing(db=db, name="North High", slug="north-high")
-        south_school = create_school_if_missing(db=db, name="South High", slug="south-high")
-
         admin = create_user_if_missing(
             db=db,
             email="admin@example.com",
             password="admin123",
             profile=("Admin", "User"),
         )
-        teacher = create_user_if_missing(
+        create_user_if_missing(
             db=db,
             email="teacher@example.com",
             password="teacher123",
             profile=("Teacher", "User"),
         )
-        student = create_user_if_missing(
+        create_user_if_missing(
             db=db,
             email="student@example.com",
             password="student123",
             profile=("Student", "User"),
         )
 
-        create_membership_if_missing(db=db, user_id=admin.id, school_id=north_school.id, role=UserRole.admin)
-        create_membership_if_missing(db=db, user_id=admin.id, school_id=south_school.id, role=UserRole.admin)
-        create_membership_if_missing(db=db, user_id=teacher.id, school_id=north_school.id, role=UserRole.teacher)
-        create_membership_if_missing(db=db, user_id=teacher.id, school_id=south_school.id, role=UserRole.teacher)
-        create_membership_if_missing(db=db, user_id=student.id, school_id=north_school.id, role=UserRole.student)
-
-        child_one = create_student_if_missing(db=db, first_name="Alice", last_name="Student", external_id="STU-001")
-        child_two = create_student_if_missing(db=db, first_name="Bob", last_name="Student", external_id="STU-002")
-
-        associate_student_school_if_missing(db=db, student_id=child_one.id, school_id=north_school.id)
-        associate_student_school_if_missing(db=db, student_id=child_two.id, school_id=north_school.id)
-        associate_student_school_if_missing(db=db, student_id=child_two.id, school_id=south_school.id)
-        associate_user_student_if_missing(db=db, user_id=student.id, student_id=child_one.id)
-        associate_user_student_if_missing(db=db, user_id=student.id, student_id=child_two.id)
-        associate_user_student_if_missing(db=db, user_id=teacher.id, student_id=child_two.id)
-
-        north_monthly_fee = create_fee_if_missing(
-            db=db,
-            school_id=north_school.id,
-            name="Cuota mensual",
-            amount=Decimal("150.00"),
-            recurrence=FeeRecurrence.monthly,
-        )
-        create_fee_if_missing(
-            db=db,
-            school_id=north_school.id,
-            name="Matrícula",
-            amount=Decimal("450.00"),
-            recurrence=FeeRecurrence.annual,
-        )
-        south_monthly_fee = create_fee_if_missing(
-            db=db,
-            school_id=south_school.id,
-            name="Cuota mensual",
-            amount=Decimal("120.00"),
-            recurrence=FeeRecurrence.monthly,
-        )
-        create_fee_if_missing(
-            db=db,
-            school_id=south_school.id,
-            name="Materiales",
-            amount=Decimal("95.00"),
-            recurrence=FeeRecurrence.one_time,
-        )
-        periods = build_recent_period_starts(anchor_period=ANCHOR_PERIOD, count=HISTORY_PERIODS)
-        for student_obj, school_obj, fee_obj, amount in [
-            (child_one, north_school, north_monthly_fee, Decimal("150.00")),
-            (child_two, north_school, north_monthly_fee, Decimal("150.00")),
-            (child_two, south_school, south_monthly_fee, Decimal("120.00")),
-        ]:
-            seed_billing_history_for_student_school(
-                db=db,
-                student=student_obj,
-                school=school_obj,
-                monthly_fee=fee_obj,
-                monthly_amount=amount,
-                periods=periods,
-            )
         seed_tc_lab_fixtures(db=db, admin=admin)
+        seed_reconciliation_lab_fixtures(db=db, admin=admin)
 
         db.commit()
     finally:

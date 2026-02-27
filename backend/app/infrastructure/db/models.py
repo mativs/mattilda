@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, JSON, Numeric, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.charge_enums import ChargeStatus, ChargeType
@@ -51,6 +51,10 @@ class User(SoftDeleteMixin, TimestampMixin, Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    reconciliation_runs: Mapped[list["ReconciliationRun"]] = relationship(
+        "ReconciliationRun",
+        back_populates="triggered_by_user",
+    )
 
 
 class School(SoftDeleteMixin, TimestampMixin, Base):
@@ -93,6 +97,16 @@ class School(SoftDeleteMixin, TimestampMixin, Base):
     )
     payments: Mapped[list["Payment"]] = relationship(
         "Payment",
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )
+    reconciliation_runs: Mapped[list["ReconciliationRun"]] = relationship(
+        "ReconciliationRun",
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )
+    reconciliation_findings: Mapped[list["ReconciliationFinding"]] = relationship(
+        "ReconciliationFinding",
         back_populates="school",
         cascade="all, delete-orphan",
     )
@@ -307,3 +321,42 @@ class Payment(SoftDeleteMixin, TenantScopedMixin, TimestampMixin, Base):
     school: Mapped[School] = relationship("School", back_populates="payments")
     student: Mapped[Student] = relationship("Student", back_populates="payments")
     invoice: Mapped[Invoice | None] = relationship("Invoice", back_populates="payments")
+
+
+class ReconciliationRun(TenantScopedMixin, TimestampMixin, Base):
+    __tablename__ = "reconciliation_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    triggered_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    school: Mapped[School] = relationship("School", back_populates="reconciliation_runs")
+    triggered_by_user: Mapped[User | None] = relationship("User", back_populates="reconciliation_runs")
+    findings: Mapped[list["ReconciliationFinding"]] = relationship(
+        "ReconciliationFinding",
+        back_populates="run",
+        cascade="all, delete-orphan",
+    )
+
+
+class ReconciliationFinding(TenantScopedMixin, TimestampMixin, Base):
+    __tablename__ = "reconciliation_findings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("reconciliation_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    check_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    entity_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    message: Mapped[str] = mapped_column(String(255), nullable=False)
+    details_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    run: Mapped[ReconciliationRun] = relationship("ReconciliationRun", back_populates="findings")
+    school: Mapped[School] = relationship("School", back_populates="reconciliation_findings")

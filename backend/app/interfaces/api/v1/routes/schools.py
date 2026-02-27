@@ -4,6 +4,13 @@ from sqlalchemy.orm import Session
 from typing import cast
 
 from app.application.services.pagination_service import paginate_scalars
+from app.application.services.reconciliation_service import (
+    create_queued_reconciliation_run,
+    get_reconciliation_run_with_findings,
+    list_reconciliation_runs_query,
+    serialize_reconciliation_finding,
+    serialize_reconciliation_run,
+)
 from app.application.services.school_service import (
     add_user_school_role,
     create_school,
@@ -15,8 +22,10 @@ from app.application.services.school_service import (
     update_school,
 )
 from app.domain.roles import UserRole
-from app.infrastructure.db.models import School, User, UserSchoolRole
+from app.infrastructure.db.models import ReconciliationRun, School, User, UserSchoolRole
 from app.infrastructure.db.session import get_db
+from app.infrastructure.tasks.invoice_tasks import enqueue_school_invoice_generation_task
+from app.infrastructure.tasks.reconciliation_tasks import enqueue_reconciliation_task
 from app.interfaces.api.v1.dependencies.auth import (
     get_current_school,
     get_current_school_id,
@@ -28,8 +37,12 @@ from app.interfaces.api.v1.dependencies.auth import (
 from app.interfaces.api.v1.dependencies.pagination import get_pagination_params
 from app.interfaces.api.v1.schemas.pagination import PaginationParams
 from app.interfaces.api.v1.schemas.school import (
+    ReconciliationRunDetailResponse,
+    ReconciliationRunListResponse,
+    ReconciliationRunTaskResponse,
     SchoolCreate,
     SchoolFinancialSummaryResponse,
+    SchoolInvoiceGenerationTaskResponse,
     SchoolListResponse,
     SchoolResponse,
     SchoolUpdate,
@@ -130,6 +143,105 @@ def get_school_financial_summary_endpoint(
     if selected_school_id != school_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Path school id must match X-School-Id")
     return get_school_financial_summary(db=db, school_id=school_id)
+
+
+@router.post(
+    "/{school_id}/invoices/generate-all",
+    response_model=SchoolInvoiceGenerationTaskResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+)
+def enqueue_school_invoice_generation(
+    school_id: int,
+    selected_school_id: int = Depends(get_current_school_id),
+):
+    if selected_school_id != school_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Path school id must match X-School-Id")
+    try:
+        task_id = enqueue_school_invoice_generation_task(school_id=school_id)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Failed to enqueue invoice generation task") from exc
+    return {
+        "task_id": task_id,
+        "status": "queued",
+        "message": "School invoice generation started",
+    }
+
+
+@router.post(
+    "/{school_id}/reconciliation/run",
+    response_model=ReconciliationRunTaskResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+)
+def enqueue_school_reconciliation(
+    school_id: int,
+    selected_school_id: int = Depends(get_current_school_id),
+    current_user: User = Depends(require_authenticated),
+    db: Session = Depends(get_db),
+):
+    if selected_school_id != school_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Path school id must match X-School-Id")
+    run = create_queued_reconciliation_run(
+        db=db,
+        school_id=school_id,
+        triggered_by_user_id=current_user.id,
+    )
+    try:
+        task_id = enqueue_reconciliation_task(run_id=run.id)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Failed to enqueue reconciliation task") from exc
+    return {
+        "task_id": task_id,
+        "run_id": run.id,
+        "status": "queued",
+        "message": "School reconciliation queued",
+    }
+
+
+@router.get(
+    "/{school_id}/reconciliation/runs",
+    response_model=ReconciliationRunListResponse,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+)
+def get_school_reconciliation_runs(
+    school_id: int,
+    selected_school_id: int = Depends(get_current_school_id),
+    pagination: PaginationParams = Depends(get_pagination_params),
+    db: Session = Depends(get_db),
+):
+    if selected_school_id != school_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Path school id must match X-School-Id")
+    runs, meta = paginate_scalars(
+        db=db,
+        base_query=list_reconciliation_runs_query(school_id=school_id),
+        offset=pagination.offset,
+        limit=pagination.limit,
+        search=pagination.search,
+        search_columns=[ReconciliationRun.status],
+    )
+    return {"items": [serialize_reconciliation_run(run) for run in runs], "pagination": meta}
+
+
+@router.get(
+    "/{school_id}/reconciliation/runs/{run_id}",
+    response_model=ReconciliationRunDetailResponse,
+    dependencies=[Depends(require_school_roles([UserRole.admin]))],
+)
+def get_school_reconciliation_run_detail(
+    school_id: int,
+    run_id: int,
+    selected_school_id: int = Depends(get_current_school_id),
+    db: Session = Depends(get_db),
+):
+    if selected_school_id != school_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Path school id must match X-School-Id")
+    run = get_reconciliation_run_with_findings(db=db, school_id=school_id, run_id=run_id)
+    findings = sorted(run.findings, key=lambda item: (item.check_code, item.severity, item.id))
+    return {
+        "run": serialize_reconciliation_run(run),
+        "findings": [serialize_reconciliation_finding(finding) for finding in findings],
+    }
 
 
 @router.post("/{school_id}/users", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_school_admin)])

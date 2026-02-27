@@ -46,6 +46,24 @@ services:
       redis:
         condition: service_healthy
 
+  celery_worker:
+    build:
+      context: ./backend
+    container_name: mattilda_celery_worker
+    command: uv run celery -A app.infrastructure.tasks.celery_app:celery_app worker --loglevel=info
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://mattilda_user:mattilda_pass@postgres:5432/mattilda_db}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      FRONTEND_URL: http://localhost:${FRONTEND_PORT:-13000}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-super-secret-change-me}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   frontend:
     build:
       context: ./frontend

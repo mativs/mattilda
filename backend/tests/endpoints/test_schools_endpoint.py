@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 from app.domain.charge_enums import ChargeStatus, ChargeType
 from app.domain.invoice_status import InvoiceStatus
 from app.domain.roles import UserRole
+from app.infrastructure.db.models import ReconciliationFinding, ReconciliationRun
 from tests.helpers.auth import auth_header, school_header, token_for_user
 from tests.helpers.factories import add_membership, create_charge, create_invoice, create_payment, create_school
 
@@ -224,6 +225,272 @@ def test_get_school_financial_summary_returns_400_for_mismatched_header(client, 
         headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["south_school"].id),
     )
     assert response.status_code == 400
+
+
+def test_enqueue_school_invoice_generation_returns_202_for_admin(client, seeded_users, monkeypatch):
+    """
+    Validate school-wide invoice generation enqueue succeeds for admin users.
+
+    1. Mock enqueue helper to return a deterministic task id.
+    2. Call enqueue endpoint once as admin in active school.
+    3. Receive accepted response payload.
+    4. Validate response status and task identifier.
+    """
+
+    monkeypatch.setattr(
+        "app.interfaces.api.v1.routes.schools.enqueue_school_invoice_generation_task",
+        lambda *, school_id: "task-123",
+    )
+    response = client.post(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/invoices/generate-all",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 202
+    assert response.json()["task_id"] == "task-123"
+    assert response.json()["status"] == "queued"
+
+
+def test_enqueue_school_invoice_generation_returns_403_for_non_admin(client, seeded_users):
+    """
+    Validate school-wide invoice generation enqueue is forbidden for non-admin users.
+
+    1. Build non-admin school-scoped header.
+    2. Call enqueue endpoint once.
+    3. Receive forbidden response.
+    4. Validate endpoint remains admin-only.
+    """
+
+    response = client.post(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/invoices/generate-all",
+        headers=school_header(token_for_user(seeded_users["teacher"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 403
+
+
+def test_enqueue_school_invoice_generation_returns_400_for_mismatched_header(client, seeded_users):
+    """
+    Validate school-wide enqueue rejects school path/header mismatch.
+
+    1. Build admin header with different selected school id.
+    2. Call enqueue endpoint once.
+    3. Receive bad-request response.
+    4. Validate school path must match X-School-Id.
+    """
+
+    response = client.post(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/invoices/generate-all",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["south_school"].id),
+    )
+    assert response.status_code == 400
+
+
+def test_enqueue_school_invoice_generation_returns_503_when_enqueue_fails(client, seeded_users, monkeypatch):
+    """
+    Validate school-wide enqueue returns service unavailable when broker dispatch fails.
+
+    1. Mock enqueue helper to raise runtime error.
+    2. Call enqueue endpoint once as admin.
+    3. Receive service unavailable response.
+    4. Validate endpoint maps enqueue failures to 503.
+    """
+
+    def _raise_enqueue_error(*, school_id):
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(
+        "app.interfaces.api.v1.routes.schools.enqueue_school_invoice_generation_task",
+        _raise_enqueue_error,
+    )
+    response = client.post(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/invoices/generate-all",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 503
+
+
+def test_enqueue_school_reconciliation_returns_202_for_admin(client, seeded_users, monkeypatch):
+    """
+    Validate reconciliation run enqueue succeeds for school admins.
+
+    1. Mock reconciliation task enqueue helper to return deterministic task id.
+    2. Call reconciliation enqueue endpoint once as admin.
+    3. Receive accepted response payload.
+    4. Validate task id and queued status fields.
+    """
+
+    monkeypatch.setattr(
+        "app.interfaces.api.v1.routes.schools.enqueue_reconciliation_task",
+        lambda *, run_id: "recon-task-123",
+    )
+    response = client.post(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/reconciliation/run",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["task_id"] == "recon-task-123"
+    assert payload["status"] == "queued"
+    assert isinstance(payload["run_id"], int)
+
+
+def test_enqueue_school_reconciliation_returns_503_when_enqueue_fails(client, seeded_users, monkeypatch):
+    """
+    Validate reconciliation enqueue maps dispatch failures to 503.
+
+    1. Mock reconciliation enqueue helper to raise runtime error.
+    2. Call reconciliation enqueue endpoint once as admin.
+    3. Receive service unavailable response.
+    4. Validate status code is 503.
+    """
+
+    def _raise(*, run_id):
+        raise RuntimeError("broker down")
+
+    monkeypatch.setattr("app.interfaces.api.v1.routes.schools.enqueue_reconciliation_task", _raise)
+    response = client.post(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/reconciliation/run",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 503
+
+
+def test_enqueue_school_reconciliation_returns_400_for_mismatched_header(client, seeded_users):
+    """
+    Validate reconciliation enqueue rejects school path/header mismatch.
+
+    1. Build admin header for different selected school.
+    2. Call reconciliation enqueue endpoint once.
+    3. Receive bad-request response.
+    4. Validate path school id must match X-School-Id.
+    """
+
+    response = client.post(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/reconciliation/run",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["south_school"].id),
+    )
+    assert response.status_code == 400
+
+
+def test_get_school_reconciliation_runs_returns_paginated_list_for_admin(client, seeded_users, db_session):
+    """
+    Validate reconciliation runs endpoint returns paginated list for admins.
+
+    1. Seed one reconciliation run for active school.
+    2. Call list runs endpoint once as admin.
+    3. Receive successful paginated response.
+    4. Validate run id appears in response items.
+    """
+
+    run = ReconciliationRun(
+        school_id=seeded_users["north_school"].id,
+        triggered_by_user_id=seeded_users["admin"].id,
+        status="completed",
+        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+        summary_json={"findings_total": 0},
+    )
+    db_session.add(run)
+    db_session.commit()
+    db_session.refresh(run)
+    response = client.get(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/reconciliation/runs",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    assert any(item["id"] == run.id for item in response.json()["items"])
+
+
+def test_get_school_reconciliation_run_detail_returns_findings_for_admin(client, seeded_users, db_session):
+    """
+    Validate reconciliation run detail endpoint returns persisted findings.
+
+    1. Seed one reconciliation run and one finding in active school.
+    2. Call run detail endpoint once as admin.
+    3. Receive successful response payload.
+    4. Validate run and finding identifiers match seeded records.
+    """
+
+    run = ReconciliationRun(
+        school_id=seeded_users["north_school"].id,
+        triggered_by_user_id=seeded_users["admin"].id,
+        status="completed",
+        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+        summary_json={"findings_total": 1},
+    )
+    db_session.add(run)
+    db_session.flush()
+    finding = ReconciliationFinding(
+        run_id=run.id,
+        school_id=seeded_users["north_school"].id,
+        check_code="invoice_total_mismatch",
+        severity="high",
+        entity_type="invoice",
+        entity_id=10,
+        message="mismatch",
+        details_json={"invoice_total": "10.00", "items_total": "9.00"},
+    )
+    db_session.add(finding)
+    db_session.commit()
+    response = client.get(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/reconciliation/runs/{run.id}",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run"]["id"] == run.id
+    assert payload["findings"][0]["id"] == finding.id
+
+
+def test_get_school_reconciliation_runs_returns_400_for_mismatched_header(client, seeded_users):
+    """
+    Validate reconciliation runs list rejects school path/header mismatch.
+
+    1. Build admin header for different selected school id.
+    2. Call reconciliation runs list endpoint once.
+    3. Receive bad-request response.
+    4. Validate path school id must match X-School-Id.
+    """
+
+    response = client.get(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/reconciliation/runs",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["south_school"].id),
+    )
+    assert response.status_code == 400
+
+
+def test_get_school_reconciliation_run_detail_returns_400_for_mismatched_header(client, seeded_users):
+    """
+    Validate reconciliation run detail rejects school path/header mismatch.
+
+    1. Build admin header for different selected school id.
+    2. Call reconciliation run detail endpoint once.
+    3. Receive bad-request response.
+    4. Validate path school id must match X-School-Id.
+    """
+
+    response = client.get(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/reconciliation/runs/1",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["south_school"].id),
+    )
+    assert response.status_code == 400
+
+
+def test_get_school_reconciliation_run_detail_returns_404_for_missing_run(client, seeded_users):
+    """
+    Validate reconciliation run detail returns not found for unknown run id.
+
+    1. Build admin header for active school.
+    2. Call run detail endpoint with unknown id.
+    3. Receive not-found response.
+    4. Validate missing run path is covered.
+    """
+
+    response = client.get(
+        f"/api/v1/schools/{seeded_users['north_school'].id}/reconciliation/runs/999999",
+        headers=school_header(token_for_user(seeded_users["admin"].id), seeded_users["north_school"].id),
+    )
+    assert response.status_code == 404
 
 
 def test_create_school_returns_201_for_school_admin(client, seeded_users):

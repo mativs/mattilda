@@ -63,6 +63,7 @@ Starter environment for a take-home exercise with:
 - Backend: http://localhost:18000
 - Dummy API endpoint: http://localhost:18000/api/v1/ping
 - Swagger docs: http://localhost:18000/docs
+- Celery worker: `docker compose logs -f celery_worker`
 - OAuth token endpoint: `POST /api/v1/auth/token`
 - Schools endpoint: `GET /api/v1/schools`
 
@@ -134,6 +135,10 @@ make quality
 - `GET /api/v1/schools/{school_id}` (requires matching `X-School-Id`)
 - `PUT /api/v1/schools/{school_id}` (requires school role: `admin`)
 - `DELETE /api/v1/schools/{school_id}` (requires school role: `admin`, soft delete)
+- `POST /api/v1/schools/{school_id}/invoices/generate-all` (admin only, async enqueue for school-wide invoice generation; returns `202` with Celery `task_id`)
+- `POST /api/v1/schools/{school_id}/reconciliation/run` (admin only, async enqueue for school-wide reconciliation run; returns `202` with `task_id` and `run_id`)
+- `GET /api/v1/schools/{school_id}/reconciliation/runs` (admin only, paginated reconciliation runs list)
+- `GET /api/v1/schools/{school_id}/reconciliation/runs/{run_id}` (admin only, reconciliation run detail with findings)
 - `POST /api/v1/schools/{school_id}/users` (associate user+role to school, admin only)
 - `DELETE /api/v1/schools/{school_id}/users/{user_id}` (deassociate user from school, admin only)
 
@@ -253,7 +258,7 @@ Frontend admin association actions for user-school and student-school use the ac
 - Default route after login: `/dashboard`.
 - Sidebar sections:
   - `Dashboard`
-  - `Configuration` (admin only): `Users`, `Students`, `Schools`, `Fees`, `Charges`
+  - `Configuration` (admin only): `Users`, `Students`, `Schools`, `Fees`, `Charges`, `Reconciliation`
   - `Students` (one item per student associated with current user in active school)
 - Top-right area includes:
   - school selector (switches active `X-School-Id` context)
@@ -281,6 +286,11 @@ Frontend admin association actions for user-school and student-school use the ac
   - `total_paid_amount`: sum of all payments received by the school
   - `total_pending_amount`: net sum of unpaid charges (includes negative credits)
   - `student_count`: distinct count of active students linked to the school
+- Admin-only dashboard action:
+  - `Generate Invoices (All Students)` queues `POST /api/v1/schools/{school_id}/invoices/generate-all`
+  - endpoint responds immediately with `202` and task id while worker processes generation in background
+  - `Run Reconciliation` queues `POST /api/v1/schools/{school_id}/reconciliation/run`
+  - endpoint responds immediately with `202`, then results are visible in `Configuration > Reconciliation`
 - User create/edit modals include school-role assignment management:
   - table of assigned school + role rows
   - school selector + role selector + add button
@@ -309,13 +319,10 @@ Seed command creates:
 
 And also creates:
 
-- `north-high` and `south-high` schools
-- Per-school memberships and roles for seeded users
-- Sample students linked to users and schools
-- Sample fee definitions per school
-- Sample charges per school/student
-- Sample invoices and invoice items (with charge snapshot values)
-- Sample payments (including partial and full payments tied to invoices)
+- `reconciliation-lab` school with targeted reconciliation anomalies for manual verification
+- Per-school memberships and roles for seeded users in seeded lab schools
+- Sample students linked to users and schools in seeded lab schools
+- Sample fees, charges, invoices/invoice items, and payments used by lab scenarios
 - `tc-lab` school with `TC-01`..`TC-15` billing fixtures for manual invoice/payment process validation
 
 `tc-lab` quick manual flow:
@@ -326,5 +333,17 @@ And also creates:
 - Open `Configuration > Students`, search by `TC-XX`, then open the student dashboard by clicking the student ID
 - For generation scenarios (`TC-07`..`TC-10`, `TC-14`, `TC-15`), use the `Generate Invoice` button on billing view
 - For payment scenarios (`TC-01`..`TC-06`, `TC-11`..`TC-13`), create payments against the open invoice and validate charge/invoice transitions
+
+`reconciliation-lab` quick manual flow:
+
+- Log in as `admin@example.com` / `admin123`
+- Switch school selector to `reconciliation-lab`
+- Click `Run Reconciliation` from the dashboard (or open `Configuration > Reconciliation` and click `Run All Checks`)
+- Open `Configuration > Reconciliation` and inspect the latest run details/findings
+- Expected seeded finding types include:
+  - `invoice_total_mismatch`
+  - `interest_invalid_origin`
+  - `invoice_open_with_sufficient_payments`
+  - `duplicate_payment_window`
 
 Use the frontend login form at `http://localhost:13000` to verify authenticated session and the dummy home page.

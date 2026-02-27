@@ -134,7 +134,48 @@ function Modal({ title, children, onClose, onSubmit, submitLabel, danger = false
   );
 }
 
-function DashboardPage({ activeSchool, isSchoolAdmin, schoolFinancialSummary }) {
+function DashboardPage({ activeSchool, isSchoolAdmin, schoolFinancialSummary, request, selectedSchoolId }) {
+  const [invoiceEnqueueLoading, setInvoiceEnqueueLoading] = useState(false);
+  const [invoiceEnqueueError, setInvoiceEnqueueError] = useState("");
+  const [invoiceEnqueueSuccess, setInvoiceEnqueueSuccess] = useState("");
+  const [reconEnqueueLoading, setReconEnqueueLoading] = useState(false);
+  const [reconEnqueueError, setReconEnqueueError] = useState("");
+  const [reconEnqueueSuccess, setReconEnqueueSuccess] = useState("");
+
+  async function triggerSchoolInvoiceGeneration() {
+    if (!selectedSchoolId) {
+      return;
+    }
+    setInvoiceEnqueueLoading(true);
+    setInvoiceEnqueueError("");
+    setInvoiceEnqueueSuccess("");
+    try {
+      const payload = await request(`/api/v1/schools/${selectedSchoolId}/invoices/generate-all`, { method: "POST" });
+      setInvoiceEnqueueSuccess(`Invoice generation queued (task ${payload.task_id}).`);
+    } catch (err) {
+      setInvoiceEnqueueError(err.message);
+    } finally {
+      setInvoiceEnqueueLoading(false);
+    }
+  }
+
+  async function triggerSchoolReconciliation() {
+    if (!selectedSchoolId) {
+      return;
+    }
+    setReconEnqueueLoading(true);
+    setReconEnqueueError("");
+    setReconEnqueueSuccess("");
+    try {
+      const payload = await request(`/api/v1/schools/${selectedSchoolId}/reconciliation/run`, { method: "POST" });
+      setReconEnqueueSuccess(`Reconciliation queued (run ${payload.run_id}, task ${payload.task_id}).`);
+    } catch (err) {
+      setReconEnqueueError(err.message);
+    } finally {
+      setReconEnqueueLoading(false);
+    }
+  }
+
   return (
     <section className="page-card">
       <SectionTitle>Dashboard</SectionTitle>
@@ -144,28 +185,46 @@ function DashboardPage({ activeSchool, isSchoolAdmin, schoolFinancialSummary }) 
             Active school: <strong>{activeSchool.name}</strong>
           </p>
           {isSchoolAdmin ? (
-            <div className="kv-grid">
-              <div>
-                <span className="muted">Billed (open invoices)</span>
-                <p>{formatCurrency(schoolFinancialSummary?.total_billed_amount)}</p>
+            <>
+              <div className="toolbar">
+                <button
+                  disabled={invoiceEnqueueLoading || !selectedSchoolId}
+                  onClick={triggerSchoolInvoiceGeneration}
+                  type="button"
+                >
+                  {invoiceEnqueueLoading ? "Queueing..." : "Generate Invoices (All Students)"}
+                </button>
+                <button disabled={reconEnqueueLoading || !selectedSchoolId} onClick={triggerSchoolReconciliation} type="button">
+                  {reconEnqueueLoading ? "Queueing..." : "Run Reconciliation"}
+                </button>
               </div>
-              <div>
-                <span className="muted">Total charged</span>
-                <p>{formatCurrency(schoolFinancialSummary?.total_charged_amount)}</p>
+              {invoiceEnqueueSuccess && <p className="success">{invoiceEnqueueSuccess}</p>}
+              {invoiceEnqueueError && <p className="error">{invoiceEnqueueError}</p>}
+              {reconEnqueueSuccess && <p className="success">{reconEnqueueSuccess}</p>}
+              {reconEnqueueError && <p className="error">{reconEnqueueError}</p>}
+              <div className="kv-grid">
+                <div>
+                  <span className="muted">Billed (open invoices)</span>
+                  <p>{formatCurrency(schoolFinancialSummary?.total_billed_amount)}</p>
+                </div>
+                <div>
+                  <span className="muted">Total charged</span>
+                  <p>{formatCurrency(schoolFinancialSummary?.total_charged_amount)}</p>
+                </div>
+                <div>
+                  <span className="muted">Total paid</span>
+                  <p>{formatCurrency(schoolFinancialSummary?.total_paid_amount)}</p>
+                </div>
+                <div>
+                  <span className="muted">Pending to pay (net unpaid)</span>
+                  <p>{formatCurrency(schoolFinancialSummary?.total_pending_amount)}</p>
+                </div>
+                <div>
+                  <span className="muted">Students</span>
+                  <p>{schoolFinancialSummary?.student_count ?? 0}</p>
+                </div>
               </div>
-              <div>
-                <span className="muted">Total paid</span>
-                <p>{formatCurrency(schoolFinancialSummary?.total_paid_amount)}</p>
-              </div>
-              <div>
-                <span className="muted">Pending to pay (net unpaid)</span>
-                <p>{formatCurrency(schoolFinancialSummary?.total_pending_amount)}</p>
-              </div>
-              <div>
-                <span className="muted">Students</span>
-                <p>{schoolFinancialSummary?.student_count ?? 0}</p>
-              </div>
-            </div>
+            </>
           ) : (
             <p className="muted">No financial metrics available for your role.</p>
           )}
@@ -2810,6 +2869,262 @@ function ChargesConfigPage({ request, selectedSchoolId }) {
   );
 }
 
+function ReconciliationConfigPage({ request, selectedSchoolId }) {
+  const [runs, setRuns] = useState([]);
+  const [runsPagination, setRunsPagination] = useState(null);
+  const [runsOffset, setRunsOffset] = useState(0);
+  const [runsSearch, setRunsSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedRun, setSelectedRun] = useState(null);
+  const [selectedFindings, setSelectedFindings] = useState([]);
+
+  async function loadRuns(nextOffset = runsOffset, nextSearch = runsSearch) {
+    if (!selectedSchoolId) {
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const query = new URLSearchParams({ offset: String(nextOffset), limit: String(DEFAULT_LIMIT) });
+      if (nextSearch.trim()) {
+        query.set("search", nextSearch.trim());
+      }
+      const payload = await request(`/api/v1/schools/${selectedSchoolId}/reconciliation/runs?${query.toString()}`);
+      setRuns(payload.items ?? []);
+      setRunsPagination(payload.pagination);
+      setRunsOffset(nextOffset);
+      if ((payload.items ?? []).length > 0) {
+        const firstId = payload.items[0].id;
+        await loadRunDetail(firstId);
+      } else {
+        setSelectedRun(null);
+        setSelectedFindings([]);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadRunDetail(runId) {
+    if (!selectedSchoolId) {
+      return;
+    }
+    setDetailLoading(true);
+    setError("");
+    try {
+      const payload = await request(`/api/v1/schools/${selectedSchoolId}/reconciliation/runs/${runId}`);
+      setSelectedRun(payload.run);
+      setSelectedFindings(payload.findings ?? []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  async function runReconciliation() {
+    if (!selectedSchoolId) {
+      return;
+    }
+    setMessage("");
+    setError("");
+    try {
+      const payload = await request(`/api/v1/schools/${selectedSchoolId}/reconciliation/run`, { method: "POST" });
+      setMessage(`Reconciliation queued (run ${payload.run_id}, task ${payload.task_id}).`);
+      await loadRuns(0, runsSearch);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    setSelectedRun(null);
+    setSelectedFindings([]);
+    setRuns([]);
+    setRunsPagination(null);
+    setRunsOffset(0);
+    setRunsSearch("");
+    setMessage("");
+    setError("");
+    if (selectedSchoolId) {
+      loadRuns(0, "");
+    } else {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSchoolId]);
+
+  const findingsBySeverity = useMemo(() => {
+    const grouped = { high: 0, medium: 0, low: 0 };
+    selectedFindings.forEach((finding) => {
+      const key = String(finding.severity ?? "").toLowerCase();
+      if (grouped[key] !== undefined) {
+        grouped[key] += 1;
+      }
+    });
+    return grouped;
+  }, [selectedFindings]);
+
+  return (
+    <section className="page-card">
+      <SectionTitle>Reconciliation</SectionTitle>
+      <div className="toolbar">
+        <input
+          placeholder="Search runs by status..."
+          value={runsSearch}
+          onChange={(event) => setRunsSearch(event.target.value)}
+        />
+        <button type="button" onClick={() => loadRuns(0, runsSearch)}>
+          Search
+        </button>
+        <button className="ghost" type="button" onClick={() => loadRuns(0, "")}>
+          Reset
+        </button>
+        <button type="button" onClick={runReconciliation}>
+          Run All Checks
+        </button>
+      </div>
+      {message && <p className="success">{message}</p>}
+      {error && <p className="error">{error}</p>}
+      {loading ? (
+        <p className="muted">Loading reconciliation runs...</p>
+      ) : (
+        <>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Finished</th>
+                <th>Findings</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>No reconciliation runs found.</td>
+                </tr>
+              ) : (
+                runs.map((run) => (
+                  <tr key={run.id}>
+                    <td>{run.id}</td>
+                    <td>{run.status}</td>
+                    <td>{run.started_at ? new Date(run.started_at).toLocaleString() : "-"}</td>
+                    <td>{run.finished_at ? new Date(run.finished_at).toLocaleString() : "-"}</td>
+                    <td>{run.summary_json?.findings_total ?? 0}</td>
+                    <td className="row-actions">
+                      <button className="ghost" type="button" onClick={() => loadRunDetail(run.id)}>
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+
+          {runsPagination && (
+            <div className="pagination">
+              <span>
+                Showing {runs.length} of {runsPagination.filtered_total} (total {runsPagination.total})
+              </span>
+              <div className="pagination-actions">
+                <button
+                  className="ghost"
+                  disabled={!runsPagination.has_prev}
+                  onClick={() => loadRuns(Math.max(0, runsOffset - DEFAULT_LIMIT), runsSearch)}
+                  type="button"
+                >
+                  Prev
+                </button>
+                <button
+                  className="ghost"
+                  disabled={!runsPagination.has_next}
+                  onClick={() => loadRuns(runsOffset + DEFAULT_LIMIT, runsSearch)}
+                  type="button"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+
+          <SectionTitle>Run detail</SectionTitle>
+          {detailLoading ? (
+            <p className="muted">Loading run details...</p>
+          ) : selectedRun ? (
+            <>
+              <div className="kv-grid">
+                <div>
+                  <span className="muted">Run id</span>
+                  <p>{selectedRun.id}</p>
+                </div>
+                <div>
+                  <span className="muted">Status</span>
+                  <p>{selectedRun.status}</p>
+                </div>
+                <div>
+                  <span className="muted">High findings</span>
+                  <p>{findingsBySeverity.high}</p>
+                </div>
+                <div>
+                  <span className="muted">Medium findings</span>
+                  <p>{findingsBySeverity.medium}</p>
+                </div>
+                <div>
+                  <span className="muted">Low findings</span>
+                  <p>{findingsBySeverity.low}</p>
+                </div>
+                <div>
+                  <span className="muted">Total findings</span>
+                  <p>{selectedRun.summary_json?.findings_total ?? selectedFindings.length}</p>
+                </div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Check</th>
+                    <th>Severity</th>
+                    <th>Entity</th>
+                    <th>Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedFindings.length === 0 ? (
+                    <tr>
+                      <td colSpan={4}>No findings in this run.</td>
+                    </tr>
+                  ) : (
+                    selectedFindings.map((finding) => (
+                      <tr key={finding.id}>
+                        <td>{finding.check_code}</td>
+                        <td>{finding.severity}</td>
+                        <td>
+                          {finding.entity_type ?? "-"} {finding.entity_id ?? ""}
+                        </td>
+                        <td>{finding.message}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </>
+          ) : (
+            <p className="muted">Select a run to inspect findings.</p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function Sidebar({ isSchoolAdmin, myStudents, selectedSchoolId }) {
   return (
     <aside className="sidebar">
@@ -2825,6 +3140,7 @@ function Sidebar({ isSchoolAdmin, myStudents, selectedSchoolId }) {
             <NavLink to="/config/schools">Schools</NavLink>
             <NavLink to="/config/fees">Fees</NavLink>
             <NavLink to="/config/charges">Charges</NavLink>
+            <NavLink to="/config/reconciliation">Reconciliation</NavLink>
           </div>
         )}
 
@@ -2905,7 +3221,15 @@ function AppLayout({
         <Routes>
           <Route
             path="/dashboard"
-            element={<DashboardPage activeSchool={activeSchool} isSchoolAdmin={isSchoolAdmin} schoolFinancialSummary={schoolFinancialSummary} />}
+            element={
+              <DashboardPage
+                activeSchool={activeSchool}
+                isSchoolAdmin={isSchoolAdmin}
+                schoolFinancialSummary={schoolFinancialSummary}
+                request={request}
+                selectedSchoolId={selectedSchoolId}
+              />
+            }
           />
           <Route path="/profile" element={<ProfilePage me={me} selectedSchool={selectedSchool} />} />
           <Route
@@ -2945,6 +3269,16 @@ function AppLayout({
           <Route
             path="/config/charges"
             element={isSchoolAdmin ? <ChargesConfigPage request={request} selectedSchoolId={selectedSchoolId} /> : <Navigate replace to="/dashboard" />}
+          />
+          <Route
+            path="/config/reconciliation"
+            element={
+              isSchoolAdmin ? (
+                <ReconciliationConfigPage request={request} selectedSchoolId={selectedSchoolId} />
+              ) : (
+                <Navigate replace to="/dashboard" />
+              )
+            }
           />
           <Route path="*" element={<Navigate replace to="/dashboard" />} />
         </Routes>

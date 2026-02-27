@@ -66,3 +66,44 @@ Three optimizations were evaluated for value versus implementation complexity:
 ### Deferred
 
 **Active invoice cache deferred.** In this scope, active-invoice queries are not the main bottleneck and introducing a second cache domain increases invalidation complexity. It can be added later if query volume or latency indicates clear value.
+
+## Async invoice generation
+
+School-wide invoice generation is implemented asynchronously with Celery using Redis as broker/result backend. This avoids long-running synchronous requests when a school has many students and reuses the same per-student invoice generation business service.
+
+Celery beat is intentionally not included in this scope. If periodic invoice generation becomes a requirement, beat can be added later to schedule recurring dispatches over the same school-wide task entrypoint.
+
+## Reconciliation checks
+
+Reconciliation is implemented as **school-scoped** asynchronous checks. Each execution writes one run record and multiple finding records so admins can review results historically from the UI.
+
+### Usefulness evaluation
+
+The current billing flow is multi-step and stateful (charges, invoices, invoice items, payments, credits, and interest). These checks provide high operational value because they detect cross-step inconsistencies that ordinary endpoint validations cannot fully prevent.
+
+- High-signal checks:
+  - invoice total vs invoice items sum mismatch
+  - interest charges with invalid origin reference
+  - open invoices where confirmed payments already cover invoice total
+  - duplicate payments within a narrow timestamp window
+- Medium-signal checks (guarded to reduce false positives):
+  - orphan unpaid charges while student has an open and not-due invoice
+  - unapplied negative unpaid charges attached to invoices that already have payments
+- Contextual integrity check:
+  - invoice items referencing cancelled charges with no residual replacement
+
+### False-positive guards
+
+- Orphan-charge check only flags charges when the student already has an open, not-due invoice.
+- Negative-charge check only flags charges linked to invoices that already received payments.
+- Duplicate-payment check requires same student, same amount, and very close timestamps.
+
+### Future bank-feed reconciliation
+
+When a payment provider or bank feed is integrated, each `Payment` should include an `external_reference` field carrying the provider transaction ID.
+
+A future reconciliation layer should compare bank movements against confirmed `Payment` records and flag:
+
+- a bank movement with no matching `Payment` in the system
+- a confirmed `Payment` with no corresponding bank movement
+- amount mismatches between bank record and `Payment`

@@ -55,3 +55,52 @@ class SchoolFinancialSummaryResponse(BaseModel):
     total_paid_amount: Decimal
     total_pending_amount: Decimal
     student_count: int
+
+
+class SchoolInvoiceGenerationTaskResponse(BaseModel):
+    task_id: str
+    status: str
+    message: str
+
+
+class ReconciliationFindingResponse(BaseModel):
+    id: int
+    run_id: int
+    school_id: int
+    check_code: str
+    severity: str
+    entity_type: str | None
+    entity_id: int | None
+    message: str
+    details_json: dict | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReconciliationRunResponse(BaseModel):
+    id: int
+    school_id: int
+    triggered_by_user_id: int | None
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    summary_json: dict | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReconciliationRunListResponse(BaseModel):
+    items: list[ReconciliationRunResponse]
+    pagination: PaginationMeta
+
+
+class ReconciliationRunDetailResponse(BaseModel):
+    run: ReconciliationRunResponse
+    findings: list[ReconciliationFindingResponse]
+
+
+class ReconciliationRunTaskResponse(BaseModel):
+    task_id: str
+    run_id: int
+    status: str
+    message: str
