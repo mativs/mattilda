@@ -37,28 +37,12 @@ Starter environment for a take-home exercise with:
 1. Initialize local environment file:
 
    ```bash
-   make init-env
-   ```
-
-2. Build and start:
-
-   ```bash
    make up
-   ```
-
-3. Apply migrations:
-
-   ```bash
    make migrate
-   ```
-
-4. Seed mock data:
-
-   ```bash
    make seed
    ```
 
-5. Verify:
+2. Verify:
 
 - Frontend: http://localhost:13000
 - Backend: http://localhost:18000
@@ -68,7 +52,7 @@ Starter environment for a take-home exercise with:
 - OAuth token endpoint: `POST /api/v1/auth/token`
 - Schools endpoint: `GET /api/v1/schools`
 
-6. Stop services:
+3. Stop services:
 
    ```bash
    make down
@@ -358,5 +342,6 @@ And also creates:
   - `interest_invalid_origin`
   - `invoice_open_with_sufficient_payments`
   - `duplicate_payment_window`
+  - `paid_charge_without_payment_evidence`
 
 Use the frontend login form at `http://localhost:13000` to verify authenticated session and the dummy home page.
