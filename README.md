@@ -25,10 +25,10 @@ Starter environment for a take-home exercise with:
 - API ergonomics with OpenAPI/ReDoc documentation, pagination/search patterns, and standardized responses.
 - High-quality automated testing strategy (service, endpoint, end2end) with enforced 100% coverage gates.
 
-## Live links
+## Live links (Cuttently Paused)
 
-- FE demo app: https://frontend-production-600b.up.railway.app/
-- API docs (ReDoc): https://api-production-5dcd.up.railway.app/redoc
+- FE demo app: https://frontend-production-600b.up.railway.app/ 
+- API docs (ReDoc): https://api-production-5dcd.up.railway.app/redoc 
 - API: https://api-production-5dcd.up.railway.app/
 
 ### Suggested manual checks
